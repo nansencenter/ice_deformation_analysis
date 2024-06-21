@@ -10,7 +10,7 @@ from pysida.lib import defor_to_aniso_con
 # minimum total deformation to compute anisotropy from
 min_e = 0.05
 # at which distances anisotropy should be computed
-edges_vec = [2,3,4]#,5,6,7,8,9]
+edges_vec = [2,3,4,5,6,7,8,9]
 # which power to use in the inertia matrix computation
 power = 0.5
 # minimum size of a pair to compute anisotropy

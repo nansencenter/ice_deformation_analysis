@@ -468,3 +468,52 @@ def get_inertia_tensor_xye(x, y, e):
     iyy = np.sum(e*y1**2)
     ixy = -np.sum(e*x1*y1)
     return np.array([[ixx, ixy], [ixy, iyy]])/e.sum()
+
+
+def get_glcmd(p_d):
+    p,d = p_d
+    if p is None:
+        return None
+    l = get_glcmd.l
+    e_min = get_glcmd.e_min
+    e_max = get_glcmd.e_max
+    d_vec= get_glcmd.d_vec
+
+    g = p.g
+    t = p.t
+    e = np.hypot(d.e1, d.e2) * DAY_SECONDS
+
+    glcmd = []
+    dist = TriNeighbours(t).get_distance_to_border()
+    for d in d_vec:
+        tn, e_g = get_tn_eg(dist, t, g, e, d, l, e_min, e_max)
+        glcmd.append(get_glcm(tn, e_g, d, l))
+    glcmd = np.dstack(glcmd).reshape(l+1, l+1, len(d_vec), 1)
+    return glcmd
+
+def get_tn_eg(dist, t, g, e, d, l, e_min, e_max):
+    # select good elements
+    gpi = np.where(g * (dist > d))[0]
+    t1 = t[gpi]
+    e1 = e[gpi]
+    tn1 = TriNeighbours(t1)
+
+    # compute gray levels
+    ee = np.clip(e1, 10**e_min, 10**e_max)
+    e_g = np.floor(l * (np.log10(ee) - e_min) / (e_max - e_min)).astype(int)
+    return tn1, e_g
+
+def get_glcm(tn, e_g, d, l):
+    glcm = np.zeros((l+1, l+1))
+    for i in range(len(e_g)):
+        neibs = tn.get_neighbours(i, d)
+        if len(neibs) == 0:
+            continue
+        if d > 1:
+            closer_neibs = tn.get_neighbours(i, d-1)
+            neibs = list(set(neibs) - set(closer_neibs))
+        if len(neibs) == 0:
+            continue
+        x = np.ones_like(neibs) * i
+        glcm[e_g[neibs], e_g[x]] += 1
+    return glcm
