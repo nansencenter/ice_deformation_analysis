@@ -5,15 +5,18 @@ import glob
 from multiprocessing import Pool
 import os
 
+from cartopy import crs as ccrs
 import matplotlib.pyplot as plt
 from matplotlib.tri import Triangulation
 from pynextsim.nextsim_mesh import NextsimMesh
+from netCDF4 import Dataset
 import numpy as np
 import pandas as pd
 from scipy.spatial import KDTree
+from scipy.optimize import curve_fit
 
 DAY_SECONDS = 24 * 60 * 60
-
+DIST2COAST_NC = None
 
 @dataclass
 class Pair:
@@ -93,6 +96,205 @@ class Defor:
             v *= DAY_SECONDS
         plt.tripcolor(p.x0, p.y0, v, triangles=p.t, mask=~p.g, vmin=vmin, vmax=vmax, cmap=cmap)
 
+
+@dataclass
+class MarsanPair:
+    x: np.ndarray
+    y: np.ndarray
+    a: np.ndarray
+    ux: np.ndarray
+    vx: np.ndarray
+    uy: np.ndarray
+    vy: np.ndarray
+    e1: np.ndarray
+    e2: np.ndarray
+    e3: np.ndarray
+
+
+class PairFilter:
+    # minimum number of days between image pair
+    # lower value allows more matching pairs but increases the tail of PDF
+    min_time_diff = 2.5
+    # maximum number of days between image pair
+    # higher value allows more matching images but increases range of values
+    max_time_diff = 4.5
+    # aggregation window (days)
+    window = '3D'
+    # minimum area of triangle element to select for computing deformation
+    # higher value decrease the number of elements but may exclude some
+    # errorneous triangles appearing between RS2 swaths
+    min_area_resolution = {
+        5000  :   8e6,
+        10000 :  20e6,
+        20000 : 120e6,
+    }
+    # maximum area of triangle element to select for computing deformation
+    # lower value decrease the number of elements but may exclude some
+    # errorneous triangles appearing between RS2 swaths
+    max_area_resolution = {
+        5000  :  20e6,
+        10000 :  80e6,
+        20000 : 320e6,
+    }
+    # minimum area/perimeter ratio to select for computing deformation
+    # lower value allow sharper angles in triangles and increases number of elements
+    min_ap_ratio = 0.17
+    # minimum distance from coast
+    min_dist=100
+    # minimum displacement between nodes
+    min_drift=1000
+    # minimum size of triangulation
+    # lower number increases number of triangles but increase chance of noise
+    min_tri_size = 10
+    # path to the dist2coas NPY file
+    dist2coast_path = None
+
+    def __init__(self, pairs, defor, resolution, **kwargs):
+        self.__dict__.update(kwargs)
+        self.min_area = self.min_area_resolution[resolution]
+        self.max_area = self.max_area_resolution[resolution]
+        self.pdefor_src = self.merge_pairs_defor(pairs, defor)
+        if self.dist2coast_path is not None:
+            self.dist2coast = np.load(self.dist2coast_path)
+
+    def merge_pairs_defor(self, pairs, defor):
+        pdefor = []
+        for p, d in zip(pairs, defor):
+            if p is None:
+                continue
+            p.__dict__.update(d.__dict__)
+            pdefor.append(p)
+        return pdefor
+
+    def filter(self, date):
+        pdefor_dst = []
+        for p in self.pdefor_src:
+            time_diff = (p.d1 - p.d0).total_seconds() / DAY_SECONDS
+            if (
+                (self.min_time_diff <= time_diff) and
+                (self.max_time_diff >= time_diff) and
+                (date <= p.d0 < (date + pd.Timedelta(self.window)))
+                ):
+                gpi = (
+                    (p.a >= self.min_area) *
+                    (p.a <= self.max_area) *
+                    (np.sqrt(p.a)/p.p >= self.min_ap_ratio)
+                )
+                if self.min_dist > 0 and self.dist2coast is not None:
+                    xel = p.x0[p.t].mean(axis=1)
+                    yel = p.y0[p.t].mean(axis=1)
+                    dist = self.get_dist2coast(xel, yel)
+                    gpi *= (dist > self.min_dist)
+
+                if self.min_drift > 0:
+                    drift = np.hypot(p.x1 - p.x0, p.y1 - p.y0)[p.t].mean(axis=1)
+                    gpi *= (drift > self.min_drift)
+
+                gpi = np.where(gpi)[0]
+                if gpi.size > self.min_tri_size:
+                    p.g[:] = False
+                    p.g[gpi] = True
+                    pdefor_dst.append(p)
+
+        return pdefor_dst
+
+    def get_dist2coast(self, x, y, srs_dst=None):
+        if srs_dst is None:
+            srs_dst = ccrs.NorthPolarStereo(central_longitude=-45, true_scale_latitude=60)
+        dist = np.zeros_like(x) + np.nan
+        srs_wgs = ccrs.PlateCarree()
+        lon, lat, _ = srs_wgs.transform_points(srs_dst, x, y).T
+        col = np.round((180 + lon)*25).astype(int)
+        row = np.round((90 - lat)*25).astype(int)
+        gpi = (col > 0) * (col < self.dist2coast.shape[1]) * (row > 0) * (row < self.dist2coast.shape[0])
+        dist[gpi] = self.dist2coast[row[gpi], col[gpi]]
+        return dist
+
+
+class MarsanSpatialScaling:
+    scale0_resolution = {
+        5000  : 3500,
+        10000 : 7000,
+        20000 : 14000,
+    }
+    scales_resolution = {
+        5000  : (7e3, 14e3, 28e3, 56e3, 112e3, 224e3, 448e3, 896e3),
+        10000 :      (14e3, 28e3, 56e3, 112e3, 224e3, 448e3, 896e3),
+        20000 :            (28e3, 56e3, 112e3, 224e3, 448e3, 896e3),
+    }
+    resolution = 10000
+
+    def __init__(self, pf, resolution):
+        self.pf = pf
+        self.resolution = resolution
+
+    def merge_pairs(self, pdefor):
+        m = defaultdict(list)
+        for p in pdefor:
+            m['x'].append(p.x0[p.t].mean(axis=1)[p.g])
+            m['y'].append(p.y0[p.t].mean(axis=1)[p.g])
+            m['a'].append(p.a[p.g])
+            m['ux'].append(p.ux[p.g])
+            m['uy'].append(p.uy[p.g])
+            m['vx'].append(p.vx[p.g])
+            m['vy'].append(p.vy[p.g])
+            m['e1'].append(p.e1[p.g])
+            m['e2'].append(p.e2[p.g])
+            m['e3'].append(p.e3[p.g])
+
+        for key in m:
+            m[key] = np.hstack(m[key])
+        return MarsanPair(**m)
+
+    def coarse_grain(self, p):
+        vel_grad_names = ['ux', 'uy', 'vx', 'vy']
+        result = defaultdict(dict)
+        scales = self.scales_resolution[self.resolution]
+        scale0 = self.scale0_resolution[self.resolution]
+        for scale in scales:
+            x_bins = np.arange(p.x.min(), p.x.max(), scale)
+            y_bins = np.arange(p.y.min(), p.y.max(), scale)
+
+            grids = {i:np.zeros((y_bins.size, x_bins.size)) + np.nan
+                    for i in ['a']+vel_grad_names}
+
+            for row, yb0 in enumerate(y_bins):
+                for col, xb0 in enumerate(x_bins):
+                    gpi = np.where(
+                        (p.x >= xb0) *
+                        (p.y >= yb0) *
+                        (p.x < (xb0 + scale)) *
+                        (p.y < (yb0 + scale)) *
+                        (p.a < (scale*1.5)**2)
+                    )[0]
+                    if gpi.size > 0:
+                        grids['a'][row, col] = p.a[gpi].sum()
+                        for i in vel_grad_names:
+                            grids[i][row, col] = (p.__dict__[i][gpi] * p.a[gpi]).sum() / p.a[gpi].sum()
+
+            gpi = np.isfinite(grids['a']) * (np.sqrt(grids['a']) > scale*0.75)
+            ux, uy, vx, vy = [grids[i][gpi] for i in vel_grad_names]
+
+            e1, e2, e3 = get_deformation(ux, uy, vx, vy)
+
+            result[scale]['e1'] = e1
+            result[scale]['e2'] = e2
+            result[scale]['e3'] = e3
+            result[scale]['a'] = grids['a'][gpi]
+        result[scale0]['e1'] = p.e1
+        result[scale0]['e2'] = p.e2
+        result[scale0]['e3'] = p.e3
+        result[scale0]['a'] = p.a
+        return result
+
+    def proc_one_date(self, date):
+        pdefor = self.pf.filter(date)
+        if len(pdefor) == 0:
+            return None
+        merged = self.merge_pairs(pdefor)
+        c = self.coarse_grain(merged)
+        m = compute_moments(c)
+        return m
 
 def dataframe_from_csv(ifile):
     """ Read RGPS data from a CSV file and convert to pandas DataFrame with OBS_DATE field """
@@ -517,3 +719,38 @@ def get_glcm(tn, e_g, d, l):
         x = np.ones_like(neibs) * i
         glcm[e_g[neibs], e_g[x]] += 1
     return glcm
+
+def compute_moments(etot, moment_powers=(1, 2, 3), factor=DAY_SECONDS, max_missing_values=2):
+    scale_names = np.array(sorted(etot.keys()))
+    scales = np.array([etot[scale_name]['a'].mean() for scale_name in scale_names])
+    gpi = np.where(np.isfinite(scales))[0]
+    if scales.size - gpi.size > max_missing_values:
+        return None
+    scales = scales[gpi]
+    scale_names = scale_names[gpi]
+
+    moms = []
+    for scale_name in scale_names:
+        e = np.hypot(etot[scale_name]['e1'], etot[scale_name]['e2']) * factor
+        mom = [np.mean(e ** n) for n in moment_powers]
+        moms.append(mom)
+    moms = np.array(moms).T
+    coefs = []
+    moms2 = []
+    for m in moms:
+        coef = curve_fit(qval_on_l, np.log10(scales[gpi]), np.log10(m[gpi]))[0]
+
+        moms2.append(10**qval_on_l(np.log10(scales[gpi]), *coef))
+        coefs.append(coef)
+
+    return dict(
+        m = moms,
+        c = np.array(coefs),
+        m2 = np.array(moms2),
+        s = np.array(scales)
+    )
+
+def qval_on_l(x, a, b):
+    return -a*x + b
+
+
