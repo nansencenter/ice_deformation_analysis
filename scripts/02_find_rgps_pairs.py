@@ -5,7 +5,7 @@ import sys
 import pandas as pd
 import numpy as np
 
-from ida.lib import get_rgps_pairs
+from pysida.lib import get_rgps_pairs
 
 ifile = str(sys.argv[1])
 ofile = ifile.replace('_LP.df', '_pairs.npz')

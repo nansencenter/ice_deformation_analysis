@@ -1,3 +1,4 @@
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import timedelta, datetime
 import glob
@@ -10,6 +11,8 @@ from pynextsim.nextsim_mesh import NextsimMesh
 import numpy as np
 import pandas as pd
 from scipy.spatial import KDTree
+
+DAY_SECONDS = 24 * 60 * 60
 
 
 @dataclass
@@ -72,6 +75,23 @@ class MeshFileList:
         if idate not in self.data:
             self.read_one_file(idate)
         return self.data[idate]['x'], self.data[idate]['y'], self.data[idate]['i']
+
+
+@dataclass
+class Defor:
+    e1: np.ndarray
+    e2: np.ndarray
+    e3: np.ndarray
+    ux: np.ndarray
+    uy: np.ndarray
+    vx: np.ndarray
+    vy: np.ndarray
+
+    def tripcolor(self, p, vmin=0, vmax=0.1, name='e0', units='d', cmap='plasma_r'):
+        v = np.array(self.__dict__[name])
+        if units == 'd':
+            v *= DAY_SECONDS
+        plt.tripcolor(p.x0, p.y0, v, triangles=p.t, mask=~p.g, vmin=vmin, vmax=vmax, cmap=cmap)
 
 
 def dataframe_from_csv(ifile):
@@ -289,3 +309,162 @@ def cleanup_triangulation(t, x, y):
     # recreate triangulation with unique nodes only
     t = np.arange(0, x.size)[i_inv].reshape((-1, 3))
     return t, x, y
+
+
+def get_deformation_from_pair(p):
+    if p is None:
+        return None, None, None, None
+    u, v = p.get_speed()
+    ux, uy, vx, vy = p.get_velocity_gradients(u, v)
+    e1, e2, e3 = get_deformation(ux, uy, vx, vy)
+    return Defor(
+        e1=e1.astype(np.float32),
+        e2=e2.astype(np.float32),
+        e3=e3.astype(np.float32),
+        ux=ux.astype(np.float32),
+        uy=uy.astype(np.float32),
+        vx=vx.astype(np.float32),
+        vy=vy.astype(np.float32),
+    )
+
+def get_deformation(ux, uy, vx, vy):
+    # deformation components
+    e1 = ux + vy
+    e2 = np.hypot((ux - vy), (uy + vx))
+    e3 = vx - uy
+    return e1, e2, e3
+
+
+def defor_to_aniso_con(p_d):
+    """ Compute aniso only for connected elements """
+    p,d = p_d
+    min_e = defor_to_aniso_con.min_e
+    power = defor_to_aniso_con.power
+    edges_vec = defor_to_aniso_con.edges_vec
+    min_size = defor_to_aniso_con.min_size
+
+    if p is None:
+        return None
+
+    if p.x0.size < min_size:
+        return None
+
+    g = p.g
+    t = p.t[g]
+    x = p.x0
+    y = p.y0
+    e = np.hypot(d.e1[g], d.e2[g]) * DAY_SECONDS
+
+    e_hi_idx = np.where(e > min_e)[0]
+    t_hi = t[e_hi_idx]
+    e_hi = e[e_hi_idx]
+
+    tn = TriNeighbours(t_hi)
+    aniso = defaultdict(list)
+    for edges in edges_vec:
+        # i - counter in t
+        # i_hi - counter in t_hi
+        for i_hi, i in enumerate(e_hi_idx):
+            jj = np.array([i_hi] + tn.get_neighbours(i_hi, edges))
+            if jj.size >= 3:#(2 + edges):
+                xjj = x[t_hi[jj]].mean(axis=1)
+                yjj = y[t_hi[jj]].mean(axis=1)
+                ejj = e_hi[jj]
+                anis_val, size_val = get_aniso_xye(xjj, yjj, ejj, power=power)
+                aniso[f'ani|{edges}'].append(anis_val)
+                aniso[f'siz|{edges}'].append(size_val)
+                aniso[f'cnt|{edges}'].append(ejj.size)
+                aniso[f'idx|{edges}'].append(i)
+
+    for key in aniso:
+        aniso[key] = np.array(aniso[key])
+
+    return aniso
+
+
+class TriNeighbours:
+    neighbours = None
+    def __init__(self, t):
+        elem2edge, edge2elem = self.get_edge_elem_relationship(t)
+        self.neighbours = []
+        for i in range(t.shape[0]):
+            neighbours_lists = [edge2elem[edge] for edge in elem2edge[i] if edge in edge2elem]
+            neighbours_i = []
+            for n1 in neighbours_lists:
+                if len(n1) != 1:
+                    for n2 in n1:
+                        if n2 != i:
+                            neighbours_i.append(n2)
+            self.neighbours.append(neighbours_i)
+        self.nneighbours = [len(n) for n in self.neighbours]
+
+    def get_edge_elem_relationship(self, t):
+        elem2edge = []
+        edge2elem = defaultdict(list)
+        for i, elem in enumerate(t):
+            jj = [(elem[0], elem[1]), (elem[1], elem[2]), (elem[2], elem[0])]
+            edges = [tuple(sorted(j)) for j in jj]
+            elem2edge.append(edges)
+            for edge in edges:
+                edge2elem[edge].append(i)
+        return elem2edge, edge2elem
+
+    def get_neighbours(self, i, n=1, e=()):
+        """ Get neighbours of element <i> crossing <n> edges
+
+        Parameters
+        ----------
+        i : int, index of element
+        n : int, number of edges to cross
+        e : (int,), indeces to exclude
+
+        Returns
+        -------
+        l : list, List of unique inidices of existing neighbor elements
+
+        """
+        # return list of existing immediate neigbours
+        if n == 1:
+            return self.neighbours[i]
+        # recursively return list of neighbours after 1 edge crossing
+        n2 = []
+        for j in self.neighbours[i]:
+            if j not in e:
+                n2.extend(self.get_neighbours(j, n-1, e+(i,)))
+        return list(set(self.neighbours[i] + n2))
+
+    def get_neighbours_many(self, indices, n=1):
+        neighbours_many = [self.get_neighbours(i, n=n) for i in indices]
+        return np.unique(np.hstack(neighbours_many)).astype(int)
+
+    def get_distance_to_border(self):
+        dist = np.zeros(len(self.neighbours)) + np.nan
+        border = np.where(np.array(self.nneighbours) < 3)[0]
+        dist[border] = 0
+
+        d = 1
+        while np.any(np.isnan(dist)):
+            for i in np.where(dist == d - 1)[0]:
+                neibs = self.get_neighbours(i)
+                for j in neibs:
+                    if np.isnan(dist[j]):
+                        dist[j] = d
+            d += 1
+        return dist
+
+
+def get_aniso_xye(x, y, e, power=1):
+    t = get_inertia_tensor_xye(x, y, e)
+    eig_vals, eig_vecs = np.linalg.eig(t)
+    eig_vals = np.abs(np.round(sorted(eig_vals), 4))
+    if eig_vals[1] == 0:
+        return 0., 0.
+    return 1 - (eig_vals[0] / eig_vals[1])**power, eig_vals[1]
+
+def get_inertia_tensor_xye(x, y, e):
+    x1 = x - x.mean()
+    y1 = y - y.mean()
+    ixx = np.sum(e*x1**2)
+    iyy = np.sum(e*y1**2)
+    ixy = -np.sum(e*x1*y1)
+    return np.array([[ixx, ixy], [ixy, iyy]])/e.sum()

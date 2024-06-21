@@ -3,7 +3,7 @@ import sys
 
 import numpy as np
 
-from ida.lib import MeshFileList, merge_pairs
+from pysida.lib import MeshFileList, merge_pairs
 
 # nominal neXtSIM mesh resolution
 resolution = 10000
@@ -17,6 +17,7 @@ distance_upper_bound1 = 100000
 distance_upper_bound2 = resolution * 1.5
 cores = 10
 
+# READ script inputs
 rfile = str(sys.argv[1])
 idir = str(sys.argv[2])
 ofile = str(sys.argv[3])

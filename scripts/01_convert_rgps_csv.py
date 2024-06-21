@@ -2,7 +2,7 @@
 
 import sys
 
-from ida.lib import dataframe_from_csv
+from pysida.lib import dataframe_from_csv
 
 ifile = str(sys.argv[1])
 ofile = ifile.replace('.csv', '.df')
