@@ -148,6 +148,7 @@ class PairFilter:
     min_tri_size = 10
     # path to the dist2coas NPY file
     dist2coast_path = None
+    dist2coast_path = None
 
     def __init__(self, pairs, defor, resolution, **kwargs):
         self.__dict__.update(kwargs)
@@ -377,14 +378,7 @@ def get_rgps_pairs_im2(im2):
             ))
     return pairs
 
-def get_triangulation(x, y):
-    """ Triangulate input points and return trinagulation, area and perimeter """
-    # get triangule indeces, area and perimeter
-    tri = Triangulation(x, y)
-
-    # coordinates of corners of each element
-    xt, yt = [i[tri.triangles].T for i in (x, y)]
-
+def measure(xt, yt):
     # side lengths (X,Y,tot)
     tri_x = np.diff(np.vstack([xt, xt[0]]), axis=0)
     tri_y = np.diff(np.vstack([yt, yt[0]]), axis=0)
@@ -394,7 +388,16 @@ def get_triangulation(x, y):
     s = tri_p/2
     # area
     tri_a = np.sqrt(s * (s - tri_s[0]) * (s - tri_s[1]) * (s - tri_s[2]))
+    return tri_a, tri_p
 
+def get_triangulation(x, y):
+    """ Triangulate input points and return trinagulation, area and perimeter """
+    # get triangule indeces, area and perimeter
+    tri = Triangulation(x, y)
+    # coordinates of corners of each element
+    xt, yt = [i[tri.triangles].T for i in (x, y)]
+    # area, perimeter
+    tri_a, tri_p = measure(xt, yt)
     return tri.triangles, tri_a, tri_p
 
 def get_velocity_gradient_elems(x, y, u, a):
