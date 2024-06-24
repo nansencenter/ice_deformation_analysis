@@ -396,7 +396,11 @@ class LKFDetector:
         pdefor = self.pair_filter.filter(date)
         eee = self.rasterizer.rasterize(pdefor)
         eee_sub = self.rasterizer.subsample(eee)
-        lkfs, defs = self.detect(eee_sub, e_i)
+        try:
+            lkfs, defs = self.detect(eee_sub, e_i)
+        except ValueError:
+            print('Error in LK detection on', date)
+            return None, None
         lkfs, defs = self.clean_nan_lkfs(lkfs, defs)
         return lkfs, defs
 

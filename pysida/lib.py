@@ -18,6 +18,12 @@ from scipy.optimize import curve_fit
 DAY_SECONDS = 24 * 60 * 60
 DIST2COAST_NC = None
 
+
+class BaseRunner:
+    def __init__(self, *args, **kwargs):
+        self.__dict__.update(kwargs)
+
+
 @dataclass
 class Pair:
     x0: np.ndarray
