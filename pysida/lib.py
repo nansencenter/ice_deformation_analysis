@@ -155,11 +155,17 @@ class PairFilter:
     # path to the dist2coas NPY file
     dist2coast_path = None
     dist2coast_path = None
+    resolution = 10000
+    min_area = None
+    max_area = None
 
-    def __init__(self, pairs, defor, resolution, **kwargs):
-        self.min_area = self.min_area_resolution[resolution]
-        self.max_area = self.max_area_resolution[resolution]
+    def __init__(self, pairs, defor, **kwargs):
         self.__dict__.update(kwargs)
+        if self.min_area is None:
+            self.min_area = self.min_area_resolution[self.resolution]
+        if self.max_area is None:
+            self.max_area = self.max_area_resolution[self.resolution]
+
         self.pdefor_src = self.merge_pairs_defor(pairs, defor)
         if self.dist2coast_path is not None:
             self.dist2coast = np.load(self.dist2coast_path)
@@ -231,9 +237,9 @@ class MarsanSpatialScaling:
     }
     resolution = 10000
 
-    def __init__(self, pf, resolution):
+    def __init__(self, pf, **kwargs):
+        self.__dict__.update(kwargs)
         self.pf = pf
-        self.resolution = resolution
 
     def merge_pairs(self, pdefor):
         m = defaultdict(list)

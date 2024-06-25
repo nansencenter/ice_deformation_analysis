@@ -39,7 +39,7 @@ class Runner(BaseRunner):
     )
     cores = 5
 
-    def __call__(self, pfile, date_begin, date_end, freq, resolution):
+    def __call__(self, pfile, date_begin, date_end, freq):
         dates = pd.date_range(date_begin, date_end, freq=freq).to_pydatetime()
 
         dfile = pfile.replace('pairs.npz', 'defor.npz')
@@ -51,7 +51,7 @@ class Runner(BaseRunner):
         with np.load(dfile, allow_pickle=True) as f:
             defor = f['defor']
 
-        pf = PairFilter(pairs, defor, resolution, **self.params)
+        pf = PairFilter(pairs, defor, **self.params)
         r = Rasterizer()
         detector = LKFDetector(pf, r)
 
@@ -66,10 +66,7 @@ class Runner(BaseRunner):
 
 if __name__ == '__main__':
     pfile = str(sys.argv[1])
-    date_begin = pd.Timestamp(sys.argv[2]) #2006-12-05
-    date_end = pd.Timestamp(sys.argv[3]) # 2007-05-15
-    # frequency at which to compute deformation snapshots, e.g. '1D'
+    date_begin = pd.Timestamp(sys.argv[2])
+    date_end = pd.Timestamp(sys.argv[3])
     freq = str(sys.argv[4])
-    # nominal mesh resolution
-    resolution = int(sys.argv[5]) # 10000
-    Runner()(pfile, date_begin, date_end, freq, resolution)
+    Runner()(pfile, date_begin, date_end, freq)
