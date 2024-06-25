@@ -157,9 +157,9 @@ class PairFilter:
     dist2coast_path = None
 
     def __init__(self, pairs, defor, resolution, **kwargs):
-        self.__dict__.update(kwargs)
         self.min_area = self.min_area_resolution[resolution]
         self.max_area = self.max_area_resolution[resolution]
+        self.__dict__.update(kwargs)
         self.pdefor_src = self.merge_pairs_defor(pairs, defor)
         if self.dist2coast_path is not None:
             self.dist2coast = np.load(self.dist2coast_path)

@@ -279,7 +279,7 @@ class Rasterizer:
     def __init__(self):
         self.x_grd, self.y_grd = np.meshgrid(
             np.arange(self.x_lft, self.x_rht, self.res / self.res_step),
-            np.arange(self.y_bot, self.y_top, self.res / self.res_step),
+            np.arange(self.y_top, self.y_bot, -self.res / self.res_step),
         )
 
     def rasterize(self, pdefor):
@@ -296,21 +296,28 @@ class Rasterizer:
                 (self.y_grd >= p.y1.min()) *
                 (self.y_grd <= p.y1.max())
             ))
-            tri = Triangulation(p.x1, p.y1, p.t)
+            e1, e2, e3, e4, t0 = [i[p.g] for i in [p.e1, p.e2, p.e3, np.hypot(p.e1, p.e2), p.t]]
+            tri = Triangulation(p.x1, p.y1, t0)
             try:
                 tfi = tri.get_trifinder()
             except:
-                #tt = remove_nodes_w_negative_area(p.x1, p.y1, p.t)
-                tt = remove_negative_elements(p.x1, p.y1, p.t)
-                tri = Triangulation(p.x1, p.y1, tt)
+                t1, i1 = remove_negative_elements(p.x1, p.y1, t0, np.arange(t0.shape[0]))
+                e1, e2, e3, e4 = [i[i1] for i in [e1, e2, e3, e4]]
+                tri = Triangulation(p.x1, p.y1, t1)
                 try:
                     tfi = tri.get_trifinder()
                 except:
                     bad_elements = set(np.where(np.sum((tri.neighbors == -1).astype(int), axis=1) > 0)[0])
-                    good_elements = np.array(list(set(range(tt.shape[0])) - bad_elements))
-                    ttt = tt[good_elements]
-                    tri = Triangulation(p.x1, p.y1, ttt)
-                    tri.get_trifinder()
+                    i2 = np.array(list(set(range(t1.shape[0])) - bad_elements))
+                    t2 = t1[i2]
+                    e1, e2, e3, e4 = [i[i2] for i in [e1, e2, e3, e4]]
+                    tri = Triangulation(p.x1, p.y1, t2)
+                    try:
+                        tfi = tri.get_trifinder()
+                    except:
+                        print('Error in getting trifinder. N=', t2.shape[0], p.d0)
+                        #raise
+                        import ipdb; ipdb.set_trace()
 
             i = tfi(self.x_grd[gpi_r, gpi_c], self.y_grd[gpi_r, gpi_c])
             if i.size == 0:
@@ -318,8 +325,7 @@ class Rasterizer:
             gpi_r, gpi_c, i = [j[i >=0] for j in [gpi_r, gpi_c, i]]
             if i.size == 0:
                 continue
-            peeee = [p.e1, p.e2, p.e3, np.hypot(p.e1, p.e2)]
-            for j, e in enumerate(peeee):
+            for j, e in enumerate([e1, e2, e3, e4]):
                 tmp_grd = np.zeros(self.x_grd.shape) + np.nan
                 tmp_grd[gpi_r, gpi_c] = e[i]
                 eee[j][np.isfinite(tmp_grd)] = tmp_grd[np.isfinite(tmp_grd)]
@@ -341,6 +347,21 @@ class Rasterizer:
         eee = self.rasterize(*args)
         eee_sub = self.subsample(eee)
         return eee_sub
+
+def remove_negative_elements(x, y, t, i):
+    xa, xb, xc = x[t].T
+    ya, yb, yc = y[t].T
+    jac = jacobian(xa, ya, xb, yb, xc, yc)
+    if jac.min() > 0:
+        return t, i
+
+    t1 = np.array(t)
+    i1 = np.array(i)
+    for negi in np.unique(t[np.where(jac <=0)[0]]):
+        gpi = np.all(t1 != negi, axis=1)
+        t1 = t1[gpi]
+        i1 = i1[gpi]
+    return remove_negative_elements(x, y, t1, i1)
 
 
 class LKFDetector:
@@ -455,16 +476,3 @@ def upsample_lkf_stats(lkf_stats, dst_dates):
         dfi = df.reindex(dst_dates).interpolate(method='linear')
         dst_values[key] = dfi.values
     return dst_values
-
-def remove_negative_elements(x, y, t):
-    xa, xb, xc = x[t].T
-    ya, yb, yc = y[t].T
-    jac = jacobian(xa, ya, xb, yb, xc, yc)
-    if jac.min() > 0:
-        return t
-
-    t1 = np.array(t)
-    for negi in np.unique(t[np.where(jac <=0)[0]]):
-        gpi = np.all(t1 != negi, axis=1)
-        t1 = t1[gpi]
-    return remove_negative_elements(x, y, t1)
