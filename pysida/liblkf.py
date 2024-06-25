@@ -259,22 +259,16 @@ def dilation_angle(d_pos, d_neg):
     return a
 
 class Rasterizer:
-    x_lft=-2500000.0
-    x_rht=300000
-    y_top=2500000
-    y_bot=-1000000.0
-    fill_nan_gaps_dist=3
-    gaus_filt_size=0.75
-    gaus_filt_trunc=1
+    x_lft = -2500000.0
+    x_rht = 300000
+    y_top = 2500000
+    y_bot = -1000000.0
+    fill_nan_gaps_dist = 3
+    gaus_filt_size = 0.75
+    gaus_filt_trunc = 1
     daysec = 24 * 60 * 60
-    res=12500
-    res_step=2
-
-    vlims = [
-        [-0.015, 0.015],
-        [0, 0.07],
-        [-0.08, 0.08],
-    ]
+    res = 12500
+    res_step = 2
 
     def __init__(self):
         self.x_grd, self.y_grd = np.meshgrid(
@@ -291,34 +285,14 @@ class Rasterizer:
         ]
         for p in pdefor:
             gpi_r, gpi_c = np.where((
-                (self.x_grd >= p.x1.min()) *
-                (self.x_grd <= p.x1.max()) *
-                (self.y_grd >= p.y1.min()) *
-                (self.y_grd <= p.y1.max())
+                (self.x_grd >= p.x0.min()) *
+                (self.x_grd <= p.x0.max()) *
+                (self.y_grd >= p.y0.min()) *
+                (self.y_grd <= p.y0.max())
             ))
             e1, e2, e3, e4, t0 = [i[p.g] for i in [p.e1, p.e2, p.e3, np.hypot(p.e1, p.e2), p.t]]
-            tri = Triangulation(p.x1, p.y1, t0)
-            try:
-                tfi = tri.get_trifinder()
-            except:
-                t1, i1 = remove_negative_elements(p.x1, p.y1, t0, np.arange(t0.shape[0]))
-                e1, e2, e3, e4 = [i[i1] for i in [e1, e2, e3, e4]]
-                tri = Triangulation(p.x1, p.y1, t1)
-                try:
-                    tfi = tri.get_trifinder()
-                except:
-                    bad_elements = set(np.where(np.sum((tri.neighbors == -1).astype(int), axis=1) > 0)[0])
-                    i2 = np.array(list(set(range(t1.shape[0])) - bad_elements))
-                    t2 = t1[i2]
-                    e1, e2, e3, e4 = [i[i2] for i in [e1, e2, e3, e4]]
-                    tri = Triangulation(p.x1, p.y1, t2)
-                    try:
-                        tfi = tri.get_trifinder()
-                    except:
-                        print('Error in getting trifinder. N=', t2.shape[0], p.d0)
-                        #raise
-                        import ipdb; ipdb.set_trace()
-
+            tri = Triangulation(p.x0, p.y0, t0)
+            tfi = tri.get_trifinder()
             i = tfi(self.x_grd[gpi_r, gpi_c], self.y_grd[gpi_r, gpi_c])
             if i.size == 0:
                 continue
@@ -347,21 +321,6 @@ class Rasterizer:
         eee = self.rasterize(*args)
         eee_sub = self.subsample(eee)
         return eee_sub
-
-def remove_negative_elements(x, y, t, i):
-    xa, xb, xc = x[t].T
-    ya, yb, yc = y[t].T
-    jac = jacobian(xa, ya, xb, yb, xc, yc)
-    if jac.min() > 0:
-        return t, i
-
-    t1 = np.array(t)
-    i1 = np.array(i)
-    for negi in np.unique(t[np.where(jac <=0)[0]]):
-        gpi = np.all(t1 != negi, axis=1)
-        t1 = t1[gpi]
-        i1 = i1[gpi]
-    return remove_negative_elements(x, y, t1, i1)
 
 
 class LKFDetector:

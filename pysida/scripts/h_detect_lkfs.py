@@ -56,8 +56,6 @@ class Runner(BaseRunner):
         detector = LKFDetector(pf, r)
 
         lkfs_defs = []
-        #for date in dates:
-        #    lkfs_defs.append(detector.proc_one_date(date))
         with Pool(self.cores) as p:
             lkfs_defs = p.map(detector.proc_one_date, dates)
 
