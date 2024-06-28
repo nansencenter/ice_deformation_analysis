@@ -9,7 +9,6 @@ from cartopy import crs as ccrs
 import matplotlib.pyplot as plt
 from matplotlib.tri import Triangulation
 from pynextsim.nextsim_mesh import NextsimMesh
-from netCDF4 import Dataset
 import numpy as np
 import pandas as pd
 from scipy.spatial import KDTree

@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 from matplotlib.tri import Triangulation
 import numpy as np
 import pandas as pd
-from pynextsim.lib import jacobian
 from scipy.stats import gaussian_kde
 from scipy.ndimage.morphology import distance_transform_edt
 from scipy.ndimage import gaussian_filter
