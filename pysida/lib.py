@@ -9,6 +9,7 @@ from cartopy import crs as ccrs
 import matplotlib.pyplot as plt
 from matplotlib.tri import Triangulation
 from pynextsim.nextsim_mesh import NextsimMesh
+from netCDF4 import Dataset
 import numpy as np
 import pandas as pd
 from scipy.spatial import KDTree
@@ -767,4 +768,37 @@ def compute_moments(etot, moment_powers=(1, 2, 3), factor=DAY_SECONDS, max_missi
 def qval_on_l(x, a, b):
     return -a*x + b
 
+def pair_from_nextsim_snapshots(f0, f1, d0, d1, r_min=0.12, a_max=200e6):
+    m0 = NextsimMesh(f0)
+    m1 = NextsimMesh(f1)
+    x0 = m0.nodes_x
+    y0 = m0.nodes_y
+    i0 = m0.get_var('id')
 
+    x1 = m1.nodes_x
+    y1 = m1.nodes_y
+    i1 = m1.get_var('id')
+
+    # indices of nodes common to 0 and 1
+    _, ids0i, ids1i = np.intersect1d(i0, i1, return_indices=True)
+
+    # coordinates of nodes of common elements
+    x0n = x0[ids0i]
+    y0n = y0[ids0i]
+    x1n = x1[ids1i]
+    y1n = y1[ids1i]
+    t, a, p = get_triangulation(x0n, y0n)
+
+    r = np.sqrt(a) / p
+    g = (r >= r_min) * (a <= a_max)
+
+    t0 = Triangulation(m0.nodes_x, m0.nodes_y, m0.indices)
+    try:
+        fi0 = t0.get_trifinder()
+    except:
+        print('Cannot get trifinder of m0 triangulation')
+    else:
+        f0i = fi0(x0n[t].mean(axis=1), y0n[t].mean(axis=1))
+        g[f0i == -1] = False
+
+    return Pair(x0n, x1n, y0n, y1n, d0, d1, t, a, p, g)

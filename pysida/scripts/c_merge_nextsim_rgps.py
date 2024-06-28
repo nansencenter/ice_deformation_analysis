@@ -30,7 +30,7 @@ class Runner(BaseRunner):
             self.distance_upper_bound2,
             cores=self.cores
         )
-        print(ofile)
+        print(ofile, 'N pairs:', len(n_pairs))
         np.savez(ofile, pairs=n_pairs)
         return ofile
 
