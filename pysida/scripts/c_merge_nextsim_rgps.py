@@ -19,6 +19,7 @@ class Runner(BaseRunner):
     cores = 5
 
     def __call__(self, rfile, idir, ofile):
+        if self.skip_processing(ofile): return ofile
         r_pairs = np.load(rfile, allow_pickle=True)['pairs']
         mfl = MeshFileList(idir, lazy=True)
         n_pairs = merge_pairs(

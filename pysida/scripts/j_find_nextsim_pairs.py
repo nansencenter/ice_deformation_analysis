@@ -11,6 +11,7 @@ class Runner(BaseRunner):
     a_max=200e6
 
     def __call__(self, nextsim_dir, date_begin, date_end, freq, ofile):
+        if self.skip_processing(ofile): return ofile
         mfl = MeshFileList(nextsim_dir)
         dates = pd.date_range(date_begin, date_end, freq=freq).to_pydatetime()
         pairs = []

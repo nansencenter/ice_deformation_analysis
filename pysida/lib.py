@@ -20,8 +20,16 @@ DIST2COAST_NC = None
 
 
 class BaseRunner:
+    force = False
+
     def __init__(self, *args, **kwargs):
         self.__dict__.update(kwargs)
+
+    def skip_processing(self, ofile):
+        """ Skip processing if output file exists and should not be overwritten """
+        if os.path.exists(ofile) and not self.force:
+            return True
+        return False
 
 
 @dataclass

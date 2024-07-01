@@ -20,7 +20,8 @@ class Runner(BaseRunner):
 
     def __call__(self, pfile):
         dfile = pfile.replace('pairs.npz', 'defor.npz')
-        afile = pfile.replace('pairs.npz', 'aniso.npz')
+        ofile = pfile.replace('pairs.npz', 'aniso.npz')
+        if self.skip_processing(ofile): return ofile
         pairs = np.load(pfile, allow_pickle=True)['pairs']
         defor = np.load(dfile, allow_pickle=True)['defor']
         defor_to_aniso_con.min_e = self.min_e
@@ -29,8 +30,8 @@ class Runner(BaseRunner):
         defor_to_aniso_con.min_size = self.min_size
         with Pool(self.cores) as p:
             aniso = p.map(defor_to_aniso_con, zip(pairs, defor))
-        print(afile)
-        np.savez(afile, aniso=aniso)
+        print(ofile)
+        np.savez(ofile, aniso=aniso)
 
 
 if __name__ == '__main__':

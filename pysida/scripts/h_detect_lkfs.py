@@ -44,6 +44,7 @@ class Runner(BaseRunner):
 
         dfile = pfile.replace('pairs.npz', 'defor.npz')
         ofile = pfile.replace('pairs.npz', 'lkfs.npz')
+        if self.skip_processing(ofile): return ofile
         print('Load', pfile)
         with np.load(pfile, allow_pickle=True) as f:
             pairs = f['pairs']

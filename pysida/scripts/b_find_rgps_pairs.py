@@ -17,6 +17,7 @@ class Runner(BaseRunner):
 
     def __call__(self, ifile, date0, date1):
         ofile = ifile.replace('_LP.df', '_pairs.npz')
+        if self.skip_processing(ofile): return ofile
         df = pd.read_pickle(ifile)
         pairs = get_rgps_pairs(
             df, date0, date1,

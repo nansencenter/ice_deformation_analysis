@@ -29,6 +29,7 @@ class Runner(BaseRunner):
     def __call__(self, pfile):
         dfile = pfile.replace('pairs.npz', 'defor.npz')
         ofile = pfile.replace('pairs.npz', 'texture.npz')
+        if self.skip_processing(ofile): return ofile
         with np.load(pfile, allow_pickle=True) as f:
             pairs = f['pairs']
         with np.load(dfile, allow_pickle=True) as f:

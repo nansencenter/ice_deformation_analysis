@@ -9,6 +9,7 @@ from pysida.liblkf import get_average_lkf_stats
 class Runner(BaseRunner):
     def __call__(self, lfile):
         ofile = lfile.replace('lkfs.npz', 'lkf_stats.npz')
+        if self.skip_processing(ofile): return ofile
         with np.load(lfile, allow_pickle=True) as f:
             dates = f['dates']
             lkfs_defs = f['lkfs_defs']

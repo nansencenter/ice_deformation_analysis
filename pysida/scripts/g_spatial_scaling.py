@@ -14,6 +14,7 @@ class Runner(BaseRunner):
     def __call__(self, pfile, date_begin, date_end, freq):
         dfile = pfile.replace('pairs.npz', 'defor.npz')
         ofile = pfile.replace('pairs.npz', 'scale.npz')
+        if self.skip_processing(ofile): return ofile
         with np.load(pfile, allow_pickle=True) as f:
             pairs = f['pairs']
         with np.load(dfile, allow_pickle=True) as f:
