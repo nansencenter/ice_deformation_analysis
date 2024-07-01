@@ -8,6 +8,7 @@ from scipy.stats import gaussian_kde
 from scipy.ndimage.morphology import distance_transform_edt
 from scipy.ndimage import gaussian_filter
 
+from pysida.lib import get_deformation
 from pysida.lkf_detection import lkf_detect_eps
 
 def fill_nan_gaps(defor, distance=5):
@@ -289,6 +290,9 @@ class Rasterizer:
                 (self.y_grd >= p.y0.min()) *
                 (self.y_grd <= p.y0.max())
             ))
+            if not hasattr(p, 'e3'):
+                e1, e2, e3 = get_deformation(p.ux, p.uy, p.vx, p.vy)
+                p.e3 = e3
             e1, e2, e3, e4, t0 = [i[p.g] for i in [p.e1, p.e2, p.e3, np.hypot(p.e1, p.e2), p.t]]
             tri = Triangulation(p.x0, p.y0, t0)
             tfi = tri.get_trifinder()
