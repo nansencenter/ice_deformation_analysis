@@ -810,3 +810,17 @@ def pair_from_nextsim_snapshots(f0, f1, d0, d1, r_min=0.12, a_max=200e6):
         g[f0i == -1] = False
 
     return Pair(x0n, x1n, y0n, y1n, d0, d1, t, a, p, g)
+
+def get_velocity_gradient_nodes(x, y, u, v):
+    """ Compute velocity gradient on input nodes """
+    # get triangule indeces, area and perimeter
+    tri_i, tri_a, tri_p = get_triangulation(x, y)
+
+    # coordinates and speeds of corners of each element
+    xt, yt, ut, vt = [i[tri_i].T for i in (x, y, u, v)]
+
+    #ux, uy, vx, vy = velocity_integrals(xt, yt, ut, vt, tri_a)
+    ux, uy = get_velocity_gradient_elems(xt, yt, ut, tri_a)
+    vx, vy = get_velocity_gradient_elems(xt, yt, vt, tri_a)
+
+    return ux, uy, vx, vy, tri_a, tri_p, tri_i

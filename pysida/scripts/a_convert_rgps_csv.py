@@ -1,10 +1,13 @@
 #!/usr/bin/env python
+import os
 import sys
 from pysida.lib import dataframe_from_csv, BaseRunner
 
 class Runner(BaseRunner):
-    def __call__(self, ifile):
+    def __call__(self, ifile, odir=None):
         ofile = ifile.replace('.csv', '.df')
+        if odir is not None:
+            ofile = os.path.join(odir, os.path.basename(ofile))
         if self.skip_processing(ofile): return ofile
         df = dataframe_from_csv(ifile)
         print(ofile)
