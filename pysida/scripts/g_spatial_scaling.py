@@ -16,15 +16,18 @@ class Runner(BaseRunner):
         ofile = pfile.replace('pairs.npz', 'scale.npz')
         if self.skip_processing(ofile): return ofile
         with np.load(pfile, allow_pickle=True) as f:
-            pairs = f['pairs']
+            pairs = list(f['pairs'])
         with np.load(dfile, allow_pickle=True) as f:
-            defor = f['defor']
+            defor = list(f['defor'])
 
         pf = PairFilter(pairs, defor, dist2coast_path=self.dist2coast_path)
         mss = MarsanSpatialScaling(pf)
         dates = pd.date_range(date_begin, date_end, freq=freq).to_pydatetime()
-        with Pool(self.cores) as p:
-            mmm = p.map(mss.proc_one_date, dates)
+        if self.cores <= 1:
+            mmm = [mss.proc_one_date(date) for date in dates]
+        else:
+            with Pool(self.cores) as p:
+                mmm = p.map(mss.proc_one_date, dates)
         print(ofile)
         np.savez(ofile, dates=dates, mmm=mmm)
         return ofile

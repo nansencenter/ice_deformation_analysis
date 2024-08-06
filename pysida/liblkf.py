@@ -270,11 +270,13 @@ class Rasterizer:
     res = 12500
     res_step = 2
 
+
     def __init__(self):
         self.x_grd, self.y_grd = np.meshgrid(
             np.arange(self.x_lft, self.x_rht, self.res / self.res_step),
             np.arange(self.y_top, self.y_bot, -self.res / self.res_step),
         )
+        self.n_invalid_triangles = 0
 
     def rasterize(self, pdefor):
         eee = [
@@ -295,7 +297,11 @@ class Rasterizer:
                 p.e3 = e3
             e1, e2, e3, e4, t0 = [i[p.g] for i in [p.e1, p.e2, p.e3, np.hypot(p.e1, p.e2), p.t]]
             tri = Triangulation(p.x0, p.y0, t0)
-            tfi = tri.get_trifinder()
+            try:
+                tfi = tri.get_trifinder()
+            except:
+                self.n_invalid_triangles += 1
+                print('Cannot get trifinder', self.n_invalid_triangles)
             i = tfi(self.x_grd[gpi_r, gpi_c], self.y_grd[gpi_r, gpi_c])
             if i.size == 0:
                 continue
@@ -308,6 +314,8 @@ class Rasterizer:
                 eee[j][np.isfinite(tmp_grd)] = tmp_grd[np.isfinite(tmp_grd)]
         for j in range(4):
             eee[j] *= self.daysec
+        if self.n_invalid_triangles > 0:
+            print('Failed triangulations = ', self.n_invalid_triangles)
         return eee
 
     def subsample(self, eee):
