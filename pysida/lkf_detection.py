@@ -244,9 +244,8 @@ def detect_segments(lkf_thin,eps_thres=0.1):
 
         # Deactivate pixels with more than one neighbour and activate neighbours
         num_neighbours = nansum_neighbours(nodetect_intm)
-
         deactivate_segs_muln = np.where(num_neighbours[seg_append[:,0][mask].astype('int'),
-                                                  seg_append[:,1][mask].astype('int')].squeeze() > 1)[0]
+                                                seg_append[:,1][mask].astype('int')] > 1)[0]
         deactivate_segs_muln = np.arange(seg_append.shape[0])[mask][deactivate_segs_muln]
 
         if (deactivate_segs_muln.size > 0):

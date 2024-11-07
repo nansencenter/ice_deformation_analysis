@@ -824,3 +824,52 @@ def get_velocity_gradient_nodes(x, y, u, v):
     vx, vy = get_velocity_gradient_elems(xt, yt, vt, tri_a)
 
     return ux, uy, vx, vy, tri_a, tri_p, tri_i
+
+
+def filter_e1(e1, e2, tria, n, min_et, use_median=False):
+    """ Filter divergence values based on the magnitude of total deformation in the neighbours.
+
+    Parameters
+    ----------
+    e1 : np.ndarray
+        Divergence values.
+    e2 : np.ndarray
+        Shear values.
+    tria : np.ndarray
+        Triangulation array.
+    n : int
+        Number of neighbours to consider.
+    min_et : float
+        Minimum total deformation value to consider.
+    use_median : bool
+        Use median instead of mean.
+
+    Returns
+    -------
+    np.ndarray
+        Filtered divergence values.
+
+    """
+    # get neighbourhood
+    tn = TriNeighbours(tria)
+    e1f = np.array(e1)
+    e_tot = np.hypot(e1, e2)
+     # loop over all elements
+    for i, eti in enumerate(e_tot):
+        if eti < min_et:
+            continue
+        # find neighbours with total deformation above threshold
+        j0 = np.array(tn.get_neighbours(i, n=n))
+        if j0.size < 1:
+            continue
+        etj0 = e_tot[j0]
+        j1 = j0[etj0 > min_et]
+
+        if j1.size < 1:
+            continue
+        # average divergence of neighbours using median or signed mean of absolute values
+        if use_median:
+            e1f[i] = np.nanmedian(e1[j1])
+        else:
+            e1f[i] = np.nanmean(e1[j1]**2)**0.5 * np.sign(np.median(e1[j1]))
+    return e1f
