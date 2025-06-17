@@ -8,7 +8,7 @@ import os
 from cartopy import crs as ccrs
 import matplotlib.pyplot as plt
 from matplotlib.tri import Triangulation
-from pynextsim.nextsim_mesh import NextsimMesh
+#from pynextsim.nextsim_mesh import NextsimMesh
 from netCDF4 import Dataset
 import numpy as np
 import pandas as pd
@@ -44,6 +44,8 @@ class Pair:
     a: np.ndarray
     p: np.ndarray
     g: np.ndarray
+    q0: np.ndarray
+    q1: np.ndarray
 
     def triplot(self):
         plt.triplot(self.x0, self.y0, self.t, mask=~self.g)
