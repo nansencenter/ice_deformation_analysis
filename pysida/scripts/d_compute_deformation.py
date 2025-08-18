@@ -8,11 +8,12 @@ from pysida.lib import get_deformation_from_pair, BaseRunner
 
 
 class Runner(BaseRunner):
-    cores = 5
+    cores = 4
     def __call__(self, pfile):
         ofile = pfile.replace('_pairs.npz', '_defor.npz')
         if self.skip_processing(ofile): return ofile
-        pairs = np.load(pfile, allow_pickle=True, fix_imports=False)['pairs']
+        with np.load(pfile, allow_pickle=True, fix_imports=False) as ds:
+            pairs = ds['pairs']
         with Pool(self.cores) as p:
             defor = p.map(get_deformation_from_pair, pairs)
         print(ofile)

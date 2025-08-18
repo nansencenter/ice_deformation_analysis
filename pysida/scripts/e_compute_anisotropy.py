@@ -4,7 +4,7 @@ import sys
 import numpy as np
 from multiprocessing import Pool
 
-from pysida.lib import defor_to_aniso_con, BaseRunner
+from pysida.lib import DeformationToAnisotropyConnected, BaseRunner
 
 class Runner(BaseRunner):
     # minimum total deformation to compute anisotropy from
@@ -24,10 +24,8 @@ class Runner(BaseRunner):
         if self.skip_processing(ofile): return ofile
         pairs = np.load(pfile, allow_pickle=True)['pairs']
         defor = np.load(dfile, allow_pickle=True)['defor']
-        defor_to_aniso_con.min_e = self.min_e
-        defor_to_aniso_con.edges_vec = self.edges_vec
-        defor_to_aniso_con.power = self.power
-        defor_to_aniso_con.min_size = self.min_size
+        defor_to_aniso_con = DeformationToAnisotropyConnected(
+            min_e=self.min_e, edges_vec=self.edges_vec, power=self.power, min_size=self.min_size)
         with Pool(self.cores) as p:
             aniso = p.map(defor_to_aniso_con, zip(pairs, defor))
         print(ofile)

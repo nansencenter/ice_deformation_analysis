@@ -5,7 +5,7 @@ import sys
 import numpy as np
 from skimage.feature import graycoprops
 
-from pysida.lib import get_glcmd, BaseRunner
+from pysida.lib import GetGLCM, BaseRunner
 
 class Runner(BaseRunner):
     cores = 5
@@ -34,10 +34,7 @@ class Runner(BaseRunner):
             pairs = f['pairs']
         with np.load(dfile, allow_pickle=True) as f:
             defor = f['defor']
-        get_glcmd.l = self.l
-        get_glcmd.e_min = self.e_min
-        get_glcmd.e_max = self.e_max
-        get_glcmd.d_vec = self.d_vec
+        get_glcmd = GetGLCM(self.e_min, self.e_max, self.l, self.d_vec)
         with Pool(self.cores) as p:
             glcmds = p.map(get_glcmd, zip(pairs, defor))
         p = []

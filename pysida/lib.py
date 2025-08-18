@@ -12,7 +12,7 @@ from pynextsim.nextsim_mesh import NextsimMesh
 from netCDF4 import Dataset
 import numpy as np
 import pandas as pd
-from scipy.spatial import KDTree
+from scipy.spatial import KDTree, cKDTree
 from scipy.optimize import curve_fit
 
 DAY_SECONDS = 24 * 60 * 60
@@ -21,7 +21,6 @@ DIST2COAST_NC = None
 
 class BaseRunner:
     force = False
-
     def __init__(self, *args, **kwargs):
         self.__dict__.update(kwargs)
 
@@ -76,12 +75,31 @@ class MeshFileList:
 
     def read_one_file(self, idate):
         ifile = self.files[self.dates.index(idate)]
-        m = NextsimMesh(ifile)
-        self.data[idate] = dict(
-            x = m.nodes_x,
-            y = m.nodes_y,
-            i = m.get_var('id'),
-        )
+        try:
+            m = NextsimMesh(ifile)
+        except:
+            print(f"Error reading {ifile}")
+            raise
+
+        try:
+            x = m.nodes_x
+        except:
+            print(f"Error reading {ifile}")
+            raise
+        
+        try:
+            y = m.nodes_y
+        except:
+            print(f"Error reading {ifile}")
+            raise
+        
+        try:
+            i = m.get_var('id')
+        except:
+            print(f"Error reading {ifile}")
+            raise
+
+        self.data[idate] = dict(x = x, y = y, i = i,)
 
     def find_nearest(self, date):
         date_diff = np.abs(np.array(self.dates) - np.array(date))
@@ -104,7 +122,7 @@ class Defor:
     vx: np.ndarray
     vy: np.ndarray
 
-    def tripcolor(self, p, vmin=0, vmax=0.1, name='e0', units='d', cmap='plasma_r'):
+    def tripcolor(self, p, vmin=0, vmax=0.1, name='e1', units='d', cmap='plasma_r'):
         v = np.array(self.__dict__[name])
         if units == 'd':
             v *= DAY_SECONDS
@@ -161,7 +179,6 @@ class PairFilter:
     # lower number increases number of triangles but increase chance of noise
     min_tri_size = 10
     # path to the dist2coas NPY file
-    dist2coast_path = None
     dist2coast_path = None
     resolution = 10000
     min_area = None
@@ -265,7 +282,12 @@ class MarsanSpatialScaling:
 
         for key in m:
             m[key] = np.hstack(m[key])
-        return MarsanPair(**m)
+        try:
+            pair = MarsanPair(**m)
+        except:
+            import ipdb; ipdb.set_trace()
+        return pair
+        
 
     def coarse_grain(self, p):
         vel_grad_names = ['ux', 'uy', 'vx', 'vy']
@@ -277,7 +299,7 @@ class MarsanSpatialScaling:
             y_bins = np.arange(p.y.min(), p.y.max(), scale)
 
             grids = {i:np.zeros((y_bins.size, x_bins.size)) + np.nan
-                    for i in ['a']+vel_grad_names}
+                    for i in ['a', 'x', 'y'] + vel_grad_names}
 
             for row, yb0 in enumerate(y_bins):
                 for col, xb0 in enumerate(x_bins):
@@ -290,10 +312,12 @@ class MarsanSpatialScaling:
                     )[0]
                     if gpi.size > 0:
                         grids['a'][row, col] = p.a[gpi].sum()
+                        grids['x'][row, col] = p.x[gpi].mean()
+                        grids['y'][row, col] = p.y[gpi].mean()
                         for i in vel_grad_names:
                             grids[i][row, col] = (p.__dict__[i][gpi] * p.a[gpi]).sum() / p.a[gpi].sum()
 
-            gpi = np.isfinite(grids['a']) * (np.sqrt(grids['a']) > scale*0.75)
+            gpi = np.isfinite(grids['a']) * (np.sqrt(grids['a']) > scale*0.5)
             ux, uy, vx, vy = [grids[i][gpi] for i in vel_grad_names]
 
             e1, e2, e3 = get_deformation(ux, uy, vx, vy)
@@ -302,10 +326,14 @@ class MarsanSpatialScaling:
             result[scale]['e2'] = e2
             result[scale]['e3'] = e3
             result[scale]['a'] = grids['a'][gpi]
+            result[scale]['x'] = grids['x'][gpi]
+            result[scale]['y'] = grids['y'][gpi]
         result[scale0]['e1'] = p.e1
         result[scale0]['e2'] = p.e2
         result[scale0]['e3'] = p.e3
         result[scale0]['a'] = p.a
+        result[scale0]['x'] = p.x
+        result[scale0]['y'] = p.y
         return result
 
     def proc_one_date(self, date):
@@ -332,55 +360,122 @@ def dataframe_from_csv(ifile):
     df = df[['IMAGE_ID', 'GPID', 'OBS_DATE', 'X_MAP', 'Y_MAP', 'Q_FLAG']].copy().rename(columns={'IMAGE_ID':'i', 'GPID': 'g', 'OBS_DATE':'d', 'X_MAP':'x', 'Y_MAP':'y', 'Q_FLAG':'q'})
     return df
 
-def get_rgps_pairs(df, date0, date1, min_time_diff=0.5, max_time_diff=5, min_size=10, r_min=0.12, a_max=200e6, cores=10):
-    """ Find pairs of images in RGPS data and create a Pair objects """
-    get_rgps_pairs_im2.df = df
-    get_rgps_pairs_im2.max_time_diff = max_time_diff
-    get_rgps_pairs_im2.min_time_diff = min_time_diff
-    get_rgps_pairs_im2.min_size = min_size
-    get_rgps_pairs_im2.r_min = r_min
-    get_rgps_pairs_im2.a_max = a_max
+def get_satellite_pairs(df, date0, date1, min_time_diff=0.5, max_time_diff=5, min_size=10, r_min=0.12, a_max=200e6, cores=10):
+    """ Find pairs of images in RGPS or S1 data and create a Pair objects """
+    get_sat_pairs = GetSatPairs(
+        df=df,
+        max_time_diff=max_time_diff,
+        min_time_diff=min_time_diff,
+        min_size=min_size,
+        r_min=r_min,
+        a_max=a_max
+    )
 
     dfd = df[(df.d >= date0) * (df.d <= date1)]
     im2_idx = np.unique(dfd.i)
     if cores <= 1:
-        pairs = list(map(get_rgps_pairs_im2, im2_idx))
+        pairs = list(map(get_sat_pairs, im2_idx))
     else:
         with Pool(cores) as p:
-            pairs = p.map(get_rgps_pairs_im2, im2_idx)
+            pairs = p.map(get_sat_pairs, im2_idx)
     pairs = [j for i in pairs for j in i]
     return pairs
 
-def get_rgps_pairs_im2(im2):
-    df = get_rgps_pairs_im2.df
-    max_time_diff = get_rgps_pairs_im2.max_time_diff
-    min_time_diff = get_rgps_pairs_im2.min_time_diff
-    min_size = get_rgps_pairs_im2.min_size
-    r_min = get_rgps_pairs_im2.r_min
-    a_max = get_rgps_pairs_im2.a_max
+def thin_poisson(x, y, r, seed=None):
+    rng = np.random.default_rng(seed)
+    pts = np.column_stack((x, y))
+    n = len(pts)
+    order = rng.permutation(n)  # randomized order reduces bias
+    tree = cKDTree(pts)
+    keep = np.zeros(n, dtype=bool)
+    available = np.ones(n, dtype=bool)
 
-    pairs = []
-    df2 = df[df.i == im2]
-    d2 = df2.iloc[0].d
+    for i in order:
+        if not available[i]:
+            continue
+        keep[i] = True
+        # Remove all points within r of the selected point
+        neigh = tree.query_ball_point(pts[i], r)
+        available[neigh] = False
+        available[i] = True  # keep remains selected
+    return keep
 
-    gpi = (
-        (df.d >= (d2 - timedelta(max_time_diff))) *
-        (df.d <= (d2 - timedelta(min_time_diff)))
-    )
-    im1_idx = np.unique(df[gpi].i)
-    for im1 in im1_idx:
-        df1 = df[df.i == im1]
-        int_ids, i1, i2 = np.intersect1d(df1.g, df2.g, return_indices=True)
-        if i1.size > min_size:
+class GetSatPairs:
+    def __init__(self, df,
+                 max_time_diff,
+                 min_time_diff,
+                 min_size,
+                 r_min,
+                 a_max,
+                 d_min=200,
+                 poisson_disk_radius=2000,
+                 exclude_regions=None):
+        self.df = df
+        self.max_time_diff = max_time_diff
+        self.min_time_diff = min_time_diff
+        self.min_size = min_size
+        self.r_min = r_min
+        self.a_max = a_max
+        self.d_min = d_min
+        self.poisson_disk_radius = poisson_disk_radius
+        self.exclude_regions = exclude_regions
 
+    def __call__(self, im2):
+        pairs = []
+        df2 = self.df[self.df.i == im2]
+        d2 = df2.iloc[0].d
+
+        gpi = (
+            (self.df.d >= (d2 - timedelta(self.max_time_diff))) *
+            (self.df.d <= (d2 - timedelta(self.min_time_diff)))
+        )
+        im1_idx = np.unique(self.df[gpi].i)
+        for im1 in im1_idx:
+            df1 = self.df[self.df.i == im1]
+            int_ids, i1, i2 = np.intersect1d(df1.g, df2.g, return_indices=True)
+            if i1.size < self.min_size:
+                continue
             x0 = df1.iloc[i1].x.to_numpy()
             x1 = df2.iloc[i2].x.to_numpy()
             y0 = df1.iloc[i1].y.to_numpy()
             y1 = df2.iloc[i2].y.to_numpy()
 
+            if self.exclude_regions is not None:
+                mask_exclude = np.zeros(x0.shape, dtype=bool)
+                for exclude_region in self.exclude_regions:
+                    mask_exclude += ((x0 > exclude_region[0]) *
+                                     (x0 < exclude_region[1]) *
+                                     (y0 > exclude_region[2]) * 
+                                     (y0 < exclude_region[3]))
+                x0 = x0[~mask_exclude]
+                y0 = y0[~mask_exclude]
+                x1 = x1[~mask_exclude]
+                y1 = y1[~mask_exclude]
+                if x0.size < self.min_size:
+                    continue
+
+            # filter individual points by minimum drift
+            drift = np.hypot(x1 - x0, y1 - y0)
+            mask = drift >= self.d_min
+            x0 = x0[mask]
+            x1 = x1[mask]
+            y0 = y0[mask]
+            y1 = y1[mask]
+            if x0.size < self.min_size:
+                continue
+            
+            # ADD PAIR FILTERING
+            mask = thin_poisson(x0, y0, r=self.poisson_disk_radius)
+            x0 = x0[mask]
+            x1 = x1[mask]
+            y0 = y0[mask]
+            y1 = y1[mask]
+            if x0.size < self.min_size:
+                continue
+
             t, a, p = get_triangulation(x0, y0)
             r = np.sqrt(a) / p
-            g = (r >= r_min) * (a <= a_max)
+            g = (r >= self.r_min) * (a <= self.a_max)
             if g[g].size == 0:
                 continue
 
@@ -396,7 +491,7 @@ def get_rgps_pairs_im2(im2):
                 p = p.astype(np.float32),
                 g = g,
             ))
-    return pairs
+        return pairs
 
 def measure(xt, yt):
     # side lengths (X,Y,tot)
@@ -431,98 +526,97 @@ def get_velocity_gradient_elems(x, y, u, a):
     ux, uy =  [i / (2 * a) for i in (ux, uy)]
     return ux, uy
 
-def merge_pairs(r_pairs, mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2, cores=10):
-    merge_one_pair.mfl = mfl
-    merge_one_pair.r_min = r_min
-    merge_one_pair.a_max = a_max
-    merge_one_pair.distance_upper_bound1 = distance_upper_bound1
-    merge_one_pair.distance_upper_bound2 = distance_upper_bound2
-
-    with Pool(10) as p:
+def merge_pairs(r_pairs, mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2, cores):
+    merge_one_pair = MergeOnePair(mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2)
+    if cores <= 1:
+        n_pairs = list(map(merge_one_pair, r_pairs))
+    with Pool(cores) as p:
         n_pairs = p.map(merge_one_pair, r_pairs)
 
     return n_pairs
 
-def merge_one_pair(r):
-    mfl = merge_one_pair.mfl
-    r_min = merge_one_pair.r_min
-    a_max = merge_one_pair.a_max
-    distance_upper_bound1 = merge_one_pair.distance_upper_bound1
-    distance_upper_bound2 = merge_one_pair.distance_upper_bound2
+class MergeOnePair:
+    def __init__(self, mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2):
+        self.mfl = mfl
+        self.r_min = r_min
+        self.a_max = a_max
+        self.distance_upper_bound1 = distance_upper_bound1
+        self.distance_upper_bound2 = distance_upper_bound2
 
-    _, nd0 = mfl.find_nearest(r.d0)
-    _, nd1 = mfl.find_nearest(r.d1)
+    def __call__(self, r):
+        _, nd0 = self.mfl.find_nearest(r.d0)
+        _, nd1 = self.mfl.find_nearest(r.d1)
 
-    if nd0 == nd1:
-        #print('nd0 == nd1')
-        return None
+        if nd0 == nd1:
+            #print('nd0 == nd1')
+            return None
 
-    xe0r = r.x0[r.t[r.g]].mean(axis=1)
-    ye0r = r.y0[r.t[r.g]].mean(axis=1)
-    rtree = KDTree(np.vstack([xe0r, ye0r]).T)
+        xe0r = r.x0[r.t[r.g]].mean(axis=1)
+        ye0r = r.y0[r.t[r.g]].mean(axis=1)
+        rtree = KDTree(np.vstack([xe0r, ye0r]).T)
 
-    x0n, y0n, ids0 = mfl.get_data(nd0)
-    gpi = np.where(np.isfinite(x0n))[0]
-    x0n, y0n, ids0 = [i[gpi] for i in [x0n, y0n, ids0]]
+        x0n, y0n, ids0 = self.mfl.get_data(nd0)
+        gpi = np.where(np.isfinite(x0n))[0]
+        x0n, y0n, ids0 = [i[gpi] for i in [x0n, y0n, ids0]]
 
-    x1n, y1n, ids1 = mfl.get_data(nd1)
-    gpi = np.where(np.isfinite(x1n))[0]
-    x1n, y1n, ids1 = [i[gpi] for i in [x1n, y1n, ids1]]
+        x1n, y1n, ids1 = self.mfl.get_data(nd1)
+        gpi = np.where(np.isfinite(x1n))[0]
+        x1n, y1n, ids1 = [i[gpi] for i in [x1n, y1n, ids1]]
 
-    # coordinates of nodes of common elements
-    _, ids0i, ids1i = np.intersect1d(ids0, ids1, return_indices=True)
-    x0n = x0n[ids0i]
-    y0n = y0n[ids0i]
-    x1n = x1n[ids1i]
-    y1n = y1n[ids1i]
+        # coordinates of nodes of common elements
+        _, ids0i, ids1i = np.intersect1d(ids0, ids1, return_indices=True)
+        x0n = x0n[ids0i]
+        y0n = y0n[ids0i]
+        x1n = x1n[ids1i]
+        y1n = y1n[ids1i]
 
-    if x0n.size < 3:
-        #print('No common nodes in nextsim')
-        return None
+        if x0n.size < 3:
+            #print('No common nodes in nextsim')
+            return None
 
-    dist, idx = rtree.query(np.vstack([x0n, y0n]).T, distance_upper_bound=distance_upper_bound1)
-    idx = np.where(np.isfinite(dist))[0]
-    if idx.size < 3:
-        #print('No nextsim nodes close to rgps nodes')
-        return None
+        dist, idx = rtree.query(np.vstack([x0n, y0n]).T, distance_upper_bound=self.distance_upper_bound1)
+        idx = np.where(np.isfinite(dist))[0]
+        if idx.size < 3:
+            #print('No nextsim nodes close to rgps nodes')
+            return None
 
-    x0n = x0n[idx]
-    y0n = y0n[idx]
-    x1n = x1n[idx]
-    y1n = y1n[idx]
+        x0n = x0n[idx]
+        y0n = y0n[idx]
+        x1n = x1n[idx]
+        y1n = y1n[idx]
 
-    t0n, a0n, p0n = get_triangulation(x0n, y0n)
-    r0n = np.sqrt(a0n) / p0n
-    g0n = (r0n >= r_min) * (a0n <= a_max)
+        t0n, a0n, p0n = get_triangulation(x0n, y0n)
+        r0n = np.sqrt(a0n) / p0n
+        g0n = (r0n >= self.r_min) * (a0n <= self.a_max)
 
-    xe0n = x0n[t0n].mean(axis=1)
-    ye0n = y0n[t0n].mean(axis=1)
+        xe0n = x0n[t0n].mean(axis=1)
+        ye0n = y0n[t0n].mean(axis=1)
 
-    dist, idx = rtree.query(np.vstack([xe0n, ye0n]).T, distance_upper_bound=distance_upper_bound2)
-    idx = np.where(np.isfinite(dist))[0]
+        dist, idx = rtree.query(np.vstack([xe0n, ye0n]).T, distance_upper_bound=self.distance_upper_bound2)
+        idx = np.where(np.isfinite(dist))[0]
 
-    if idx.size == 0:
-        #print('No nextsim elements close to rgps nodes')
-        return None
+        if idx.size == 0:
+            #print('No nextsim elements close to rgps nodes')
+            return None
 
-    t0n = t0n[idx]
-    _, x0n, y0n = cleanup_triangulation(t0n, x0n, y0n)
-    t0n, x1n, y1n = cleanup_triangulation(t0n, x1n, y1n)
+        t0n = t0n[idx]
+        _, x0n, y0n = cleanup_triangulation(t0n, x0n, y0n)
+        t0n, x1n, y1n = cleanup_triangulation(t0n, x1n, y1n)
 
-    n = Pair(
-        x0 = x0n.astype(np.float32),
-        x1 = x1n.astype(np.float32),
-        y0 = y0n.astype(np.float32),
-        y1 = y1n.astype(np.float32),
-        d0 = pd.Timestamp(nd0),
-        d1 = pd.Timestamp(nd1),
-        t = t0n,
-        a = a0n[idx].astype(np.float32),
-        p = p0n[idx].astype(np.float32),
-        g = g0n[idx],
-    )
+        n = Pair(
+            x0 = x0n.astype(np.float32),
+            x1 = x1n.astype(np.float32),
+            y0 = y0n.astype(np.float32),
+            y1 = y1n.astype(np.float32),
+            d0 = pd.Timestamp(nd0),
+            d1 = pd.Timestamp(nd1),
+            t = t0n,
+            a = a0n[idx].astype(np.float32),
+            p = p0n[idx].astype(np.float32),
+            g = g0n[idx],
+        )
 
-    return n
+        return n
 
 def cleanup_triangulation(t, x, y):
     """ remove nodes which are not in the triangulation (node index not in t) """
@@ -560,51 +654,58 @@ def get_deformation(ux, uy, vx, vy):
     return e1, e2, e3
 
 
-def defor_to_aniso_con(p_d):
-    """ Compute aniso only for connected elements """
-    p,d = p_d
-    min_e = defor_to_aniso_con.min_e
-    power = defor_to_aniso_con.power
-    edges_vec = defor_to_aniso_con.edges_vec
-    min_size = defor_to_aniso_con.min_size
+class DeformationToAnisotropyConnected:
+    def __init__(self, min_e=0.1, power=2, edges_vec=None, min_size=3):
+        self.min_e = min_e
+        self.power = power
+        self.edges_vec = edges_vec if edges_vec is not None else [1, 2, 3]
+        self.min_size = min_size
 
-    if p is None:
-        return None
+    def __call__(self, p_d):
+        """ Compute aniso only for connected elements """
+        p,d = p_d
+        min_e = self.min_e
+        power = self.power
+        edges_vec = self.edges_vec
+        min_size = self.min_size
 
-    if p.x0.size < min_size:
-        return None
+        if p is None:
+            return None
 
-    g = p.g
-    t = p.t[g]
-    x = p.x0
-    y = p.y0
-    e = np.hypot(d.e1[g], d.e2[g]) * DAY_SECONDS
+        if p.x0.size < min_size:
+            return None
 
-    e_hi_idx = np.where(e > min_e)[0]
-    t_hi = t[e_hi_idx]
-    e_hi = e[e_hi_idx]
+        g = p.g
+        t = p.t[g]
+        x = p.x0
+        y = p.y0
+        e = np.hypot(d.e1[g], d.e2[g]) * DAY_SECONDS
 
-    tn = TriNeighbours(t_hi)
-    aniso = defaultdict(list)
-    for edges in edges_vec:
-        # i - counter in t
-        # i_hi - counter in t_hi
-        for i_hi, i in enumerate(e_hi_idx):
-            jj = np.array([i_hi] + tn.get_neighbours(i_hi, edges))
-            if jj.size >= 3:#(2 + edges):
-                xjj = x[t_hi[jj]].mean(axis=1)
-                yjj = y[t_hi[jj]].mean(axis=1)
-                ejj = e_hi[jj]
-                anis_val, size_val = get_aniso_xye(xjj, yjj, ejj, power=power)
-                aniso[f'ani|{edges}'].append(anis_val)
-                aniso[f'siz|{edges}'].append(size_val)
-                aniso[f'cnt|{edges}'].append(ejj.size)
-                aniso[f'idx|{edges}'].append(i)
+        e_hi_idx = np.where(e > min_e)[0]
+        t_hi = t[e_hi_idx]
+        e_hi = e[e_hi_idx]
 
-    for key in aniso:
-        aniso[key] = np.array(aniso[key])
+        tn = TriNeighbours(t_hi)
+        aniso = defaultdict(list)
+        for edges in edges_vec:
+            # i - counter in t
+            # i_hi - counter in t_hi
+            for i_hi, i in enumerate(e_hi_idx):
+                jj = np.array([i_hi] + tn.get_neighbours(i_hi, edges))
+                if jj.size >= 3:#(2 + edges):
+                    xjj = x[t_hi[jj]].mean(axis=1)
+                    yjj = y[t_hi[jj]].mean(axis=1)
+                    ejj = e_hi[jj]
+                    anis_val, size_val = get_aniso_xye(xjj, yjj, ejj, power=power)
+                    aniso[f'ani|{edges}'].append(anis_val)
+                    aniso[f'siz|{edges}'].append(size_val)
+                    aniso[f'cnt|{edges}'].append(ejj.size)
+                    aniso[f'idx|{edges}'].append(i)
 
-    return aniso
+        for key in aniso:
+            aniso[key] = np.array(aniso[key])
+
+        return aniso
 
 
 class TriNeighbours:
@@ -695,26 +796,33 @@ def get_inertia_tensor_xye(x, y, e):
     return np.array([[ixx, ixy], [ixy, iyy]])/e.sum()
 
 
-def get_glcmd(p_d):
-    p,d = p_d
-    if p is None:
-        return None
-    l = get_glcmd.l
-    e_min = get_glcmd.e_min
-    e_max = get_glcmd.e_max
-    d_vec= get_glcmd.d_vec
+class GetGLCM:
+    def __init__(self, e_min, e_max, l, d_vec):
+        self.e_min = e_min
+        self.e_max = e_max
+        self.l = l
+        self.d_vec = d_vec
 
-    g = p.g
-    t = p.t
-    e = np.hypot(d.e1, d.e2) * DAY_SECONDS
+    def __call__(self, p_d):
+        p,d = p_d
+        if p is None:
+            return None
+        l = self.l
+        e_min = self.e_min
+        e_max = self.e_max
+        d_vec = self.d_vec
 
-    glcmd = []
-    dist = TriNeighbours(t).get_distance_to_border()
-    for d in d_vec:
-        tn, e_g = get_tn_eg(dist, t, g, e, d, l, e_min, e_max)
-        glcmd.append(get_glcm(tn, e_g, d, l))
-    glcmd = np.dstack(glcmd).reshape(l+1, l+1, len(d_vec), 1)
-    return glcmd
+        g = p.g
+        t = p.t
+        e = np.hypot(d.e1, d.e2) * DAY_SECONDS
+
+        glcmd = []
+        dist = TriNeighbours(t).get_distance_to_border()
+        for d in d_vec:
+            tn, e_g = get_tn_eg(dist, t, g, e, d, l, e_min, e_max)
+            glcmd.append(get_glcm(tn, e_g, d, l))
+        glcmd = np.dstack(glcmd).reshape(l+1, l+1, len(d_vec), 1)
+        return glcmd
 
 def get_tn_eg(dist, t, g, e, d, l, e_min, e_max):
     # select good elements

@@ -5,7 +5,7 @@ import sys
 import pandas as pd
 import numpy as np
 
-from pysida.lib import get_rgps_pairs, BaseRunner
+from pysida.lib import get_satellite_pairs, BaseRunner
 
 class Runner(BaseRunner):
     min_time_diff = 0.5
@@ -13,13 +13,13 @@ class Runner(BaseRunner):
     min_size = 100
     r_min = 0.12
     a_max = 200e6
-    cores = 5
+    cores = 4
 
     def __call__(self, ifile, date0, date1):
-        ofile = ifile.replace('_LP.df', '_pairs.npz')
+        ofile = ifile.replace('_LP.df', f'_{date1.strftime("%Y%m%d")}_pairs.npz')
         if self.skip_processing(ofile): return ofile
         df = pd.read_pickle(ifile)
-        pairs = get_rgps_pairs(
+        pairs = get_satellite_pairs(
             df, date0, date1,
             min_time_diff=self.min_time_diff,
             max_time_diff=self.max_time_diff,

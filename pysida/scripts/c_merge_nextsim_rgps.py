@@ -10,17 +10,22 @@ class Runner(BaseRunner):
     resolution = 10000
     # minimal a/p ratio
     r_min = 0.13
-    # maximal area
-    a_max = 2. * resolution ** 2
     # distance from RGPS nodes to neXtSIM nodes for initial subset
     distance_upper_bound1 = 100000
-    # distance from RGPS elements to neXtSIM elements for final subset
-    distance_upper_bound2 = resolution * 1.5
-    cores = 5
+    cores = 4
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # maximal area
+        self.a_max = 2. * self.resolution ** 2
+        # distance from RGPS elements to neXtSIM elements for final subset
+        self.distance_upper_bound2 = self.resolution * 1.5
+
 
     def __call__(self, rfile, idir, ofile):
         if self.skip_processing(ofile): return ofile
-        r_pairs = np.load(rfile, allow_pickle=True)['pairs']
+        with np.load(rfile, allow_pickle=True) as ds:
+            r_pairs = ds['pairs']
         mfl = MeshFileList(idir, lazy=True)
         n_pairs = merge_pairs(
             r_pairs,
