@@ -473,8 +473,7 @@ class GetSatPairs:
             if x0.size < self.min_size:
                 continue
 
-            t, a, p = get_triangulation(x0, y0)
-            r = np.sqrt(a) / p
+            t, a, p, r = get_triangulation(x0, y0)
             g = (r >= self.r_min) * (a <= self.a_max)
             if g[g].size == 0:
                 continue
@@ -493,27 +492,31 @@ class GetSatPairs:
             ))
         return pairs
 
+def jacobian(x0, y0, x1, y1, x2, y2):
+    return (x1-x0)*(y2-y0)-(x2-x0)*(y1-y0)
+
+def get_area(xt, yt):
+    return .5*jacobian(xt[0], yt[0], xt[1], yt[1], xt[2], yt[2])
+
 def measure(xt, yt):
-    # side lengths (X,Y,tot)
-    tri_x = np.diff(np.vstack([xt, xt[0]]), axis=0)
-    tri_y = np.diff(np.vstack([yt, yt[0]]), axis=0)
-    tri_s = np.hypot(tri_x, tri_y)
-    # perimeter
-    tri_p = np.sum(tri_s, axis=0)
-    s = tri_p/2
-    # area
-    tri_a = np.sqrt(s * (s - tri_s[0]) * (s - tri_s[1]) * (s - tri_s[2]))
-    return tri_a, tri_p
+    dx = np.diff(np.vstack([xt, xt[0]]), axis=0)
+    dy = np.diff(np.vstack([yt, yt[0]]), axis=0)
+    edges = np.hypot(dx, dy)
+    perim = edges.sum(axis=0)
+    area = get_area(xt, yt)
+    ap_ratio = area**0.5 / perim
+    return area, perim, ap_ratio
 
 def get_triangulation(x, y):
     """ Triangulate input points and return trinagulation, area and perimeter """
     # get triangule indeces, area and perimeter
     tri = Triangulation(x, y)
     # coordinates of corners of each element
-    xt, yt = [i[tri.triangles].T for i in (x, y)]
+    xt, yt = x[tri.triangles].T, y[tri.triangles].T
     # area, perimeter
-    tri_a, tri_p = measure(xt, yt)
-    return tri.triangles, tri_a, tri_p
+    tri_a, tri_p, tri_r = measure(xt, yt)
+
+    return tri.triangles, tri_a, tri_p, tri_r
 
 def get_velocity_gradient_elems(x, y, u, a):
     """ Compute velocity gradient on input elements """
@@ -527,6 +530,9 @@ def get_velocity_gradient_elems(x, y, u, a):
     return ux, uy
 
 def merge_pairs(r_pairs, mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2, cores):
+    """ NB: Outdated function. It was used in script c_merge_nextsim_rgps to sample nextsim outputs around RGPS obs
+        merge_sat_next_pairs is used instead now
+    """
     merge_one_pair = MergeOnePair(mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2)
     if cores <= 1:
         n_pairs = list(map(merge_one_pair, r_pairs))
@@ -536,6 +542,9 @@ def merge_pairs(r_pairs, mfl, r_min, a_max, distance_upper_bound1, distance_uppe
     return n_pairs
 
 class MergeOnePair:
+    """ NB: Outdated class. It was used in script c_merge_nextsim_rgps to sample nextsim outputs around RGPS obs
+        MergeSatNextPair is used instead now.
+    """
     def __init__(self, mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2):
         self.mfl = mfl
         self.r_min = r_min
@@ -585,8 +594,7 @@ class MergeOnePair:
         x1n = x1n[idx]
         y1n = y1n[idx]
 
-        t0n, a0n, p0n = get_triangulation(x0n, y0n)
-        r0n = np.sqrt(a0n) / p0n
+        t0n, a0n, p0n, r0n = get_triangulation(x0n, y0n)
         g0n = (r0n >= self.r_min) * (a0n <= self.a_max)
 
         xe0n = x0n[t0n].mean(axis=1)
@@ -903,9 +911,7 @@ def pair_from_nextsim_snapshots(f0, f1, d0, d1, r_min=0.12, a_max=200e6):
     y0n = y0[ids0i]
     x1n = x1[ids1i]
     y1n = y1[ids1i]
-    t, a, p = get_triangulation(x0n, y0n)
-
-    r = np.sqrt(a) / p
+    t, a, p, r = get_triangulation(x0n, y0n)
     g = (r >= r_min) * (a <= a_max)
 
     t0 = Triangulation(m0.nodes_x, m0.nodes_y, m0.indices)
@@ -922,7 +928,7 @@ def pair_from_nextsim_snapshots(f0, f1, d0, d1, r_min=0.12, a_max=200e6):
 def get_velocity_gradient_nodes(x, y, u, v):
     """ Compute velocity gradient on input nodes """
     # get triangule indeces, area and perimeter
-    tri_i, tri_a, tri_p = get_triangulation(x, y)
+    tri_i, tri_a, tri_p, tri_r = get_triangulation(x, y)
 
     # coordinates and speeds of corners of each element
     xt, yt, ut, vt = [i[tri_i].T for i in (x, y, u, v)]
@@ -1000,8 +1006,7 @@ def find_mututual_nearest_neighbours(points_set1, points_set2):
     return mutual_points1, mutual_points2
 
 def get_subset_pair(idx, x0, y0, x1, y1, d0, d1, r_min, a_max):
-    t0, a0, p0 = get_triangulation(x0[idx], y0[idx])
-    r0 = np.sqrt(a0) / p0
+    t0, a0, p0, r0 = get_triangulation(x0[idx], y0[idx])
     g0 = (r0 >= r_min) * (a0 <= a_max)
 
     pair = Pair(
@@ -1082,5 +1087,4 @@ def merge_sat_next_pairs(r_pairs, mfl, r_min, a_max, distance_upper_bound1, dist
         n_pairs = list(map(merge_sat_next_pair, r_pairs))
     with Pool(cores) as p:
         n_pairs = p.map(merge_sat_next_pair, r_pairs)
-
     return n_pairs
