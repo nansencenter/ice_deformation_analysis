@@ -981,3 +981,106 @@ def filter_e1(e1, e2, tria, n, min_et, use_median=False):
         else:
             e1f[i] = np.nanmean(e1[j1]**2)**0.5 * np.sign(np.median(e1[j1]))
     return e1f
+
+def find_mututual_nearest_neighbours(points_set1, points_set2):
+    # Mutual nearest neighbors using cKDTree: select points in set1 that are nearest to set2
+    # and whose matched set2 point has them as its nearest in set1.
+
+    # Build trees
+    tree1 = cKDTree(points_set1)
+    tree2 = cKDTree(points_set2)
+
+    # Nearest neighbor in the other set
+    d12, nn2_of_1 = tree2.query(points_set1)  # for each set1 point -> nearest set2 index
+    d21, nn1_of_2 = tree1.query(points_set2)  # for each set2 point -> nearest set1 index
+
+    # Indices of mutual nearest neighbors
+    mutual_points2 = np.nonzero(nn2_of_1[nn1_of_2] == np.arange(len(nn1_of_2)))[0]
+    mutual_points1 = nn1_of_2[mutual_points2]
+    return mutual_points1, mutual_points2
+
+def get_subset_pair(idx, x0, y0, x1, y1, d0, d1, r_min, a_max):
+    t0, a0, p0 = get_triangulation(x0[idx], y0[idx])
+    r0 = np.sqrt(a0) / p0
+    g0 = (r0 >= r_min) * (a0 <= a_max)
+
+    pair = Pair(
+        x0 = x0[idx].astype(np.float32),
+        x1 = x1[idx].astype(np.float32),
+        y0 = y0[idx].astype(np.float32),
+        y1 = y1[idx].astype(np.float32),
+        d0 = pd.Timestamp(d0),
+        d1 = pd.Timestamp(d1),
+        t = t0,
+        a = a0.astype(np.float32),
+        p = p0.astype(np.float32),
+        g = g0,
+    )
+
+    return pair
+
+class MergeSatNextPair:
+    def __init__(self, mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2):
+        self.mfl = mfl
+        self.r_min = r_min
+        self.a_max = a_max
+        self.distance_upper_bound1 = distance_upper_bound1
+        self.distance_upper_bound2 = distance_upper_bound2
+
+    def __call__(self, r):
+        _, nd0 = self.mfl.find_nearest(r.d0)
+        _, nd1 = self.mfl.find_nearest(r.d1)
+
+        if nd0 == nd1:
+            #print('nd0 == nd1')
+            return None
+
+        xe0r = r.x0[r.t[r.g]].mean(axis=1)
+        ye0r = r.y0[r.t[r.g]].mean(axis=1)
+        rtree = cKDTree(np.vstack([xe0r, ye0r]).T)
+
+        x0n, y0n, ids0 = self.mfl.get_data(nd0)
+        gpi = np.where(np.isfinite(x0n))[0]
+        x0n, y0n, ids0 = [i[gpi] for i in [x0n, y0n, ids0]]
+
+        x1n, y1n, ids1 = self.mfl.get_data(nd1)
+        gpi = np.where(np.isfinite(x1n))[0]
+        x1n, y1n, ids1 = [i[gpi] for i in [x1n, y1n, ids1]]
+
+        # coordinates of nodes of common elements
+        _, ids0i, ids1i = np.intersect1d(ids0, ids1, return_indices=True)
+        x0n = x0n[ids0i]
+        y0n = y0n[ids0i]
+        x1n = x1n[ids1i]
+        y1n = y1n[ids1i]
+
+        if x0n.size < 3:
+            #print('No common nodes in nextsim')
+            return None
+
+        dist, idx = rtree.query(np.vstack([x0n, y0n]).T, distance_upper_bound=self.distance_upper_bound1)
+        idx = np.where(np.isfinite(dist))[0]
+        if idx.size < 3:
+            #print('No nextsim nodes close to rgps nodes')
+            return None
+
+        x0n = x0n[idx]
+        y0n = y0n[idx]
+        x1n = x1n[idx]
+        y1n = y1n[idx]
+
+        mpi1, mpi2 = find_mututual_nearest_neighbours(np.column_stack([r.x0, r.y0]), np.column_stack([x0n, y0n]))
+
+        r_pair = get_subset_pair(mpi1, r.x0, r.y0, r.x1, r.y1, r.d0, r.d1, self.r_min, self.a_max)
+        n_pair = get_subset_pair(mpi2, x0n, y0n, x1n, y1n, nd0, nd1, self.r_min, self.a_max)
+
+        return r_pair, n_pair
+
+def merge_sat_next_pairs(r_pairs, mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2, cores):
+    merge_sat_next_pair = MergeSatNextPair(mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2)
+    if cores <= 1:
+        n_pairs = list(map(merge_sat_next_pair, r_pairs))
+    with Pool(cores) as p:
+        n_pairs = p.map(merge_sat_next_pair, r_pairs)
+
+    return n_pairs

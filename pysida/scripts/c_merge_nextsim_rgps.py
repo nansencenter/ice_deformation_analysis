@@ -3,7 +3,7 @@ import sys
 
 import numpy as np
 
-from pysida.lib import MeshFileList, merge_pairs, BaseRunner
+from pysida.lib import MeshFileList, merge_sat_next_pairs, BaseRunner
 
 class Runner(BaseRunner):
     # nominal neXtSIM mesh resolution
@@ -22,13 +22,13 @@ class Runner(BaseRunner):
         self.distance_upper_bound2 = self.resolution * 1.5
 
 
-    def __call__(self, rfile, idir, ofile):
-        if self.skip_processing(ofile): return ofile
-        with np.load(rfile, allow_pickle=True) as ds:
-            r_pairs = ds['pairs']
-        mfl = MeshFileList(idir, lazy=True)
-        n_pairs = merge_pairs(
-            r_pairs,
+    def __call__(self, src_file, src_dir, dst_file_sat, dst_file_nextsim):
+        if self.skip_processing(src_file): return dst_file_sat
+        with np.load(src_file, allow_pickle=True) as ds:
+            sat_src_pairs = ds['pairs']
+        mfl = MeshFileList(src_dir, lazy=True)
+        pairs = merge_sat_next_pairs(
+            sat_src_pairs,
             mfl,
             self.r_min,
             self.a_max,
@@ -36,12 +36,16 @@ class Runner(BaseRunner):
             self.distance_upper_bound2,
             cores=self.cores
         )
-        print(ofile, 'N pairs:', len(n_pairs))
-        np.savez(ofile, pairs=n_pairs)
-        return ofile
+        sat_pairs, nextsim_pairs = zip(*pairs)
+        print(dst_file_sat, 'N pairs:', len(sat_pairs))
+        np.savez(dst_file_sat, pairs=sat_pairs)
+        print(dst_file_nextsim, 'N pairs:', len(nextsim_pairs))
+        np.savez(dst_file_nextsim, pairs=nextsim_pairs)
+        return dst_file_sat, dst_file_nextsim
 
 if __name__ == '__main__':
-    rfile = str(sys.argv[1])
-    idir = str(sys.argv[2])
-    ofile = str(sys.argv[3])
-    Runner()(rfile, idir, ofile)
+    src_file = str(sys.argv[1])
+    src_dir = str(sys.argv[2])
+    dst_file_sat = str(sys.argv[3])
+    dst_file_nextsim = str(sys.argv[4])
+    Runner()(src_file, src_dir, dst_file_sat, dst_file_nextsim)
