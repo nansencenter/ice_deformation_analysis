@@ -3,7 +3,7 @@ import sys
 
 import numpy as np
 
-from pysida.lib import MeshFileList, merge_pairs, BaseRunner
+from pysida.lib import MeshFileList, sample_nextsim_pairs, BaseRunner
 
 class Runner(BaseRunner):
     # nominal neXtSIM mesh resolution
@@ -28,7 +28,7 @@ class Runner(BaseRunner):
         with np.load(rfile, allow_pickle=True) as ds:
             r_pairs = ds['pairs']
         mfl = MeshFileList(idir, lazy=True)
-        n_pairs = merge_pairs(
+        n_pairs = sample_nextsim_pairs(
             r_pairs,
             mfl,
             self.r_min,

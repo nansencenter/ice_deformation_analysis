@@ -3,7 +3,7 @@ import sys
 
 import numpy as np
 
-from pysida.lib import MeshFileList, merge_sat_next_pairs, BaseRunner
+from pysida.lib import MeshFileList, collocate_pairs, BaseRunner
 
 class Runner(BaseRunner):
     # nominal neXtSIM mesh resolution
@@ -27,13 +27,12 @@ class Runner(BaseRunner):
         with np.load(src_file, allow_pickle=True) as ds:
             sat_src_pairs = ds['pairs']
         mfl = MeshFileList(src_dir, lazy=True)
-        pairs = merge_sat_next_pairs(
+        pairs = collocate_pairs(
             sat_src_pairs,
             mfl,
             self.r_min,
             self.a_max,
             self.distance_upper_bound1,
-            self.distance_upper_bound2,
             cores=self.cores
         )
         sat_pairs, nextsim_pairs = [], []

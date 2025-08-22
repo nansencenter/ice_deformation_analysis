@@ -496,19 +496,19 @@ def get_velocity_gradient_elems(x, y, u, a):
     ux, uy =  [i / (2 * a) for i in (ux, uy)]
     return ux, uy
 
-def merge_pairs(r_pairs, mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2, cores):
+def sample_nextsim_pairs(r_pairs, mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2, cores):
     """ NB: Outdated function. It was used in script c_merge_nextsim_rgps to sample nextsim outputs around RGPS obs
-        merge_sat_next_pairs is used instead now
+        collocate_pairs is used instead now
     """
-    merge_one_pair = MergeOnePair(mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2)
+    sample_one_pair = SampleOnePair(mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2)
     if cores <= 1:
-        n_pairs = list(map(merge_one_pair, r_pairs))
+        n_pairs = list(map(sample_one_pair, r_pairs))
     with Pool(cores) as p:
-        n_pairs = p.map(merge_one_pair, r_pairs)
+        n_pairs = p.map(sample_one_pair, r_pairs)
 
     return n_pairs
 
-class MergeOnePair:
+class SampleOnePair:
     """ NB: Outdated class. It was used in script c_merge_nextsim_rgps to sample nextsim outputs around RGPS obs
         MergeSatNextPair is used instead now.
     """
@@ -996,13 +996,12 @@ def get_subset_pair(idx, x0, y0, x1, y1, d0, d1, r_min, a_max):
 
     return pair
 
-class MergeSatNextPair:
-    def __init__(self, mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2):
+class CollocatePair:
+    def __init__(self, mfl, r_min, a_max, distance_upper_bound1):
         self.mfl = mfl
         self.r_min = r_min
         self.a_max = a_max
         self.distance_upper_bound1 = distance_upper_bound1
-        self.distance_upper_bound2 = distance_upper_bound2
 
     def __call__(self, r):
         _, nd0 = self.mfl.find_nearest(r.d0)
@@ -1053,10 +1052,10 @@ class MergeSatNextPair:
 
         return r_pair, n_pair
 
-def merge_sat_next_pairs(r_pairs, mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2, cores):
-    merge_sat_next_pair = MergeSatNextPair(mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2)
+def collocate_pairs(r_pairs, mfl, r_min, a_max, distance_upper_bound1, cores):
+    collocate_pair = CollocatePair(mfl, r_min, a_max, distance_upper_bound1)
     if cores <= 1:
-        n_pairs = list(map(merge_sat_next_pair, r_pairs))
+        n_pairs = list(map(collocate_pair, r_pairs))
     with Pool(cores) as p:
-        n_pairs = p.map(merge_sat_next_pair, r_pairs)
+        n_pairs = p.map(collocate_pair, r_pairs)
     return n_pairs
