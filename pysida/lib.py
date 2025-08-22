@@ -327,27 +327,6 @@ def dataframe_from_csv(ifile):
     df = df[['IMAGE_ID', 'GPID', 'OBS_DATE', 'X_MAP', 'Y_MAP', 'Q_FLAG']].copy().rename(columns={'IMAGE_ID':'i', 'GPID': 'g', 'OBS_DATE':'d', 'X_MAP':'x', 'Y_MAP':'y', 'Q_FLAG':'q'})
     return df
 
-def get_satellite_pairs(df, date0, date1, min_time_diff=0.5, max_time_diff=5, min_size=10, r_min=0.12, a_max=200e6, cores=10):
-    """ Find pairs of images in RGPS or S1 data and create a Pair objects """
-    get_sat_pairs = GetSatPairs(
-        df=df,
-        max_time_diff=max_time_diff,
-        min_time_diff=min_time_diff,
-        min_size=min_size,
-        r_min=r_min,
-        a_max=a_max
-    )
-
-    dfd = df[(df.d >= date0) * (df.d <= date1)]
-    im2_idx = np.unique(dfd.i)
-    if cores <= 1:
-        pairs = list(map(get_sat_pairs, im2_idx))
-    else:
-        with Pool(cores) as p:
-            pairs = p.map(get_sat_pairs, im2_idx)
-    pairs = [j for i in pairs for j in i]
-    return pairs
-
 def thin_poisson(x, y, r, seed=None):
     rng = np.random.default_rng(seed)
     pts = np.column_stack((x, y))
@@ -367,27 +346,36 @@ def thin_poisson(x, y, r, seed=None):
         available[i] = True  # keep remains selected
     return keep
 
-class GetSatPairs:
-    def __init__(self, df,
-                 max_time_diff,
-                 min_time_diff,
-                 min_size,
-                 r_min,
-                 a_max,
-                 d_min=200,
-                 poisson_disk_radius=2000,
-                 exclude_regions=None):
-        self.df = df
-        self.max_time_diff = max_time_diff
-        self.min_time_diff = min_time_diff
-        self.min_size = min_size
-        self.r_min = r_min
-        self.a_max = a_max
-        self.d_min = d_min
-        self.poisson_disk_radius = poisson_disk_radius
-        self.exclude_regions = exclude_regions
 
-    def __call__(self, im2):
+class GetSatPairs:
+    min_time_diff = 0.5
+    max_time_diff = 7
+    min_size = 100
+    r_min = 0.12
+    a_max = 200e6
+    d_min = 200
+    poisson_disk_radius = None
+    exclude_regions = None
+    cores = 4
+
+    def __init__(self, df, **kwargs):
+        self.df = df
+        self.__dict__.update(kwargs)
+
+    def get_all_pairs(self, date0, date1):
+        """ Find pairs of images in RGPS or S1 data and create a Pair objects """
+        
+        dfd = self.df[(self.df.d >= date0) * (self.df.d <= date1)]
+        im2_idx = np.unique(dfd.i)
+        if self.cores <= 1:
+            pairs = list(map(self.get_pairs_for_img2, im2_idx))
+        else:
+            with Pool(self.cores) as p:
+                pairs = p.map(self.get_pairs_for_img2, im2_idx)
+        pairs = [j for i in pairs for j in i]
+        return pairs
+
+    def get_pairs_for_img2(self, im2):
         pairs = []
         df2 = self.df[self.df.i == im2]
         d2 = df2.iloc[0].d
@@ -432,13 +420,14 @@ class GetSatPairs:
                 continue
             
             # ADD PAIR FILTERING
-            mask = thin_poisson(x0, y0, r=self.poisson_disk_radius)
-            x0 = x0[mask]
-            x1 = x1[mask]
-            y0 = y0[mask]
-            y1 = y1[mask]
-            if x0.size < self.min_size:
-                continue
+            if self.poisson_disk_radius is not None:
+                mask = thin_poisson(x0, y0, r=self.poisson_disk_radius)
+                x0 = x0[mask]
+                x1 = x1[mask]
+                y0 = y0[mask]
+                y1 = y1[mask]
+                if x0.size < self.min_size:
+                    continue
 
             t, a, p, r = get_triangulation(x0, y0)
             g = (r >= self.r_min) * (a <= self.a_max)
