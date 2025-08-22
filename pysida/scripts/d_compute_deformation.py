@@ -16,8 +16,8 @@ class Runner(BaseRunner):
             pairs = ds['pairs']
         with Pool(self.cores) as p:
             defor = p.map(get_deformation_from_pair, pairs)
-        print(ofile)
-        np.savez(ofile, defor=np.array(defor, dtype='object'))
+        print(ofile, len(defor))
+        np.savez(ofile, defor=defor)
         return ofile
 
 if __name__ == '__main__':
