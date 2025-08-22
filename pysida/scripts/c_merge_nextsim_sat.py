@@ -23,7 +23,7 @@ class Runner(BaseRunner):
 
 
     def __call__(self, src_file, src_dir, dst_file_sat, dst_file_nextsim):
-        if self.skip_processing(src_file): return dst_file_sat
+        if self.skip_processing(dst_file_sat): return dst_file_sat, dst_file_nextsim
         with np.load(src_file, allow_pickle=True) as ds:
             sat_src_pairs = ds['pairs']
         mfl = MeshFileList(src_dir, lazy=True)
@@ -36,7 +36,11 @@ class Runner(BaseRunner):
             self.distance_upper_bound2,
             cores=self.cores
         )
-        sat_pairs, nextsim_pairs = zip(*pairs)
+        sat_pairs, nextsim_pairs = [], []
+        for sat_pair_nextsim_pair in pairs:
+            if sat_pair_nextsim_pair and len(sat_pair_nextsim_pair) == 2:
+                sat_pairs.append(sat_pair_nextsim_pair[0])
+                nextsim_pairs.append(sat_pair_nextsim_pair[1])
         print(dst_file_sat, 'N pairs:', len(sat_pairs))
         np.savez(dst_file_sat, pairs=sat_pairs)
         print(dst_file_nextsim, 'N pairs:', len(nextsim_pairs))

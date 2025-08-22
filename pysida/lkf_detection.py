@@ -266,7 +266,7 @@ def detect_segments(lkf_thin,eps_thres=0.1):
                     ),1).squeeze()
                 new_starts_deact_ind_success = True
             except:
-                print('ERROR in new_starts_deact_ind')
+                #print('ERROR in new_starts_deact_ind')
                 new_starts_deact_ind_success = False
             if new_starts_deact_ind_success and new_starts_deact_ind.size>0:
                 new_starts = np.append(new_starts,neigh_deactivate[new_starts_deact_ind].reshape((new_starts_deact_ind.size,2)),axis=0)
@@ -401,9 +401,9 @@ def detect_segments(lkf_thin,eps_thres=0.1):
                                                                                    new_starts[:,1].astype('int')),
                                                                                   lkf_thin[1:-1,1:-1].shape),
                                                              return_counts=True)
-            if np.any(new_starts_counts > 1):
-                print ('Warning: %i starting points arises maximum %i-times' %(np.sum(new_starts_counts>1),
-                                                                              np.max(new_starts_counts)))
+            #if np.any(new_starts_counts > 1):
+            #    print ('Warning: %i starting points arises maximum %i-times' %(np.sum(new_starts_counts>1),
+            #                                                                  np.max(new_starts_counts)))
 
             # Append new positions of this detection step
             num_new_starts = new_starts.shape[0]

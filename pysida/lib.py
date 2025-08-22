@@ -152,25 +152,9 @@ class PairFilter:
     max_time_diff = 4.5
     # aggregation window (days)
     window = '3D'
-    # minimum area of triangle element to select for computing deformation
-    # higher value decrease the number of elements but may exclude some
-    # errorneous triangles appearing between RS2 swaths
-    min_area_resolution = {
-        5000  :   8e6,
-        10000 :  20e6,
-        20000 : 120e6,
-    }
-    # maximum area of triangle element to select for computing deformation
-    # lower value decrease the number of elements but may exclude some
-    # errorneous triangles appearing between RS2 swaths
-    max_area_resolution = {
-        5000  :  20e6,
-        10000 :  80e6,
-        20000 : 320e6,
-    }
     # minimum area/perimeter ratio to select for computing deformation
     # lower value allow sharper angles in triangles and increases number of elements
-    min_ap_ratio = 0.17
+    min_ap_ratio = 0.18
     # minimum distance from coast
     min_dist=100
     # minimum displacement between nodes
@@ -180,17 +164,11 @@ class PairFilter:
     min_tri_size = 10
     # path to the dist2coas NPY file
     dist2coast_path = None
-    resolution = 10000
-    min_area = None
-    max_area = None
-
-    def __init__(self, pairs, defor, **kwargs):
+    
+    def __init__(self, pairs, defor, resolution=10000, **kwargs):
         self.__dict__.update(kwargs)
-        if self.min_area is None:
-            self.min_area = self.min_area_resolution[self.resolution]
-        if self.max_area is None:
-            self.max_area = self.max_area_resolution[self.resolution]
-
+        self.min_area = resolution ** 2 / 15
+        self.max_area = resolution ** 2 * 15
         self.pdefor_src = self.merge_pairs_defor(pairs, defor)
         if self.dist2coast_path is not None:
             self.dist2coast = np.load(self.dist2coast_path)
@@ -247,24 +225,15 @@ class PairFilter:
         gpi = (col > 0) * (col < self.dist2coast.shape[1]) * (row > 0) * (row < self.dist2coast.shape[0])
         dist[gpi] = self.dist2coast[row[gpi], col[gpi]]
         return dist
-
+    
 
 class MarsanSpatialScaling:
-    scale0_resolution = {
-        5000  : 3500,
-        10000 : 7000,
-        20000 : 14000,
-    }
-    scales_resolution = {
-        5000  : (7e3, 14e3, 28e3, 56e3, 112e3, 224e3, 448e3, 896e3),
-        10000 :      (14e3, 28e3, 56e3, 112e3, 224e3, 448e3, 896e3),
-        20000 :            (28e3, 56e3, 112e3, 224e3, 448e3, 896e3),
-    }
-    resolution = 10000
-
-    def __init__(self, pf, **kwargs):
-        self.__dict__.update(kwargs)
+    def __init__(self, pf, min_scale_factor=1.5, max_scale_factor=0.1, num_scales=10, skip_percentile=0.05):
         self.pf = pf
+        self.min_scale_factor = min_scale_factor
+        self.max_scale_factor = max_scale_factor
+        self.num_scales = num_scales
+        self.skip_percentile = skip_percentile
 
     def merge_pairs(self, pdefor):
         m = defaultdict(list)
@@ -288,62 +257,60 @@ class MarsanSpatialScaling:
             import ipdb; ipdb.set_trace()
         return pair
         
+    def compute_scales(self, merged):
+        min_scale = np.median(merged.a)**0.5 * self.min_scale_factor
+        max_scale = np.hypot(merged.x.max() - merged.x.min(), merged.y.max() - merged.y.min()) * self.max_scale_factor
+        scales = np.round(np.logspace(np.log10(min_scale), np.log10(max_scale), num=self.num_scales)/100).astype(int)*100
+        return scales
 
-    def coarse_grain(self, p):
-        vel_grad_names = ['ux', 'uy', 'vx', 'vy']
-        result = defaultdict(dict)
-        scales = self.scales_resolution[self.resolution]
-        scale0 = self.scale0_resolution[self.resolution]
+    def coarse_grain(self, merged, scales):
+        # remove extreme outliers
+        me_e4 = np.hypot(merged.e1, merged.e2)
+        gpi = (me_e4 > np.percentile(me_e4, self.skip_percentile)) * (me_e4 < np.percentile(me_e4, 100-self.skip_percentile))
+        for name in merged.__dict__:
+            merged.__dict__[name] = merged.__dict__[name][gpi]
+
+        etot = {}
+        etot_grid = {}
         for scale in scales:
-            x_bins = np.arange(p.x.min(), p.x.max(), scale)
-            y_bins = np.arange(p.y.min(), p.y.max(), scale)
+            merged_cols = ((merged.x - merged.x.min()) / scale).astype(int)
+            merged_rows = ((merged.y.max() - merged.y) / scale).astype(int)
 
-            grids = {i:np.zeros((y_bins.size, x_bins.size)) + np.nan
-                    for i in ['a', 'x', 'y'] + vel_grad_names}
+            grids = {}
+            vel_grad_names = ['ux', 'uy', 'vx', 'vy']
+            sum_names = ['a'] +  vel_grad_names
+            for name in sum_names:
+                sum_array = np.zeros((merged_rows.max() + 1, merged_cols.max() + 1))
+                if name == 'a':
+                    values_to_sum = merged.a
+                else:
+                    values_to_sum = merged.__dict__[name] * merged.a
+                np.add.at(sum_array, (merged_rows, merged_cols), values_to_sum)
+                grids[name] = sum_array
 
-            for row, yb0 in enumerate(y_bins):
-                for col, xb0 in enumerate(x_bins):
-                    gpi = np.where(
-                        (p.x >= xb0) *
-                        (p.y >= yb0) *
-                        (p.x < (xb0 + scale)) *
-                        (p.y < (yb0 + scale)) *
-                        (p.a < (scale*1.5)**2)
-                    )[0]
-                    if gpi.size > 0:
-                        grids['a'][row, col] = p.a[gpi].sum()
-                        grids['x'][row, col] = p.x[gpi].mean()
-                        grids['y'][row, col] = p.y[gpi].mean()
-                        for i in vel_grad_names:
-                            grids[i][row, col] = (p.__dict__[i][gpi] * p.a[gpi]).sum() / p.a[gpi].sum()
+            grids['a'][grids['a'] == 0] = np.nan
+            for name in vel_grad_names:    
+                grids[name] /= grids['a']
 
-            gpi = np.isfinite(grids['a']) * (np.sqrt(grids['a']) > scale*0.5)
+            gpi = np.isfinite(grids['a'])
             ux, uy, vx, vy = [grids[i][gpi] for i in vel_grad_names]
+            e1, e2, _ = get_deformation(ux, uy, vx, vy)
+            etot[scale] = np.hypot(e1, e2) * DAY_SECONDS
 
-            e1, e2, e3 = get_deformation(ux, uy, vx, vy)
-
-            result[scale]['e1'] = e1
-            result[scale]['e2'] = e2
-            result[scale]['e3'] = e3
-            result[scale]['a'] = grids['a'][gpi]
-            result[scale]['x'] = grids['x'][gpi]
-            result[scale]['y'] = grids['y'][gpi]
-        result[scale0]['e1'] = p.e1
-        result[scale0]['e2'] = p.e2
-        result[scale0]['e3'] = p.e3
-        result[scale0]['a'] = p.a
-        result[scale0]['x'] = p.x
-        result[scale0]['y'] = p.y
-        return result
+            etot_grid[scale] = np.zeros_like(grids['a']) + np.nan
+            etot_grid[scale][gpi] = etot[scale]
+        return etot, etot_grid
 
     def proc_one_date(self, date):
         pdefor = self.pf.filter(date)
         if len(pdefor) == 0:
             return None
         merged = self.merge_pairs(pdefor)
-        c = self.coarse_grain(merged)
-        m = compute_moments(c)
+        scales = self.compute_scales(merged)
+        etot, _ = self.coarse_grain(merged, scales)
+        m = compute_moments(etot)
         return m
+
 
 def dataframe_from_csv(ifile):
     """ Read RGPS data from a CSV file and convert to pandas DataFrame with OBS_DATE field """
@@ -663,11 +630,12 @@ def get_deformation(ux, uy, vx, vy):
 
 
 class DeformationToAnisotropyConnected:
-    def __init__(self, min_e=0.1, power=2, edges_vec=None, min_size=3):
+    def __init__(self, min_e=0.1, power=2, edges_vec=None, min_size=3, min_neibors=3):
         self.min_e = min_e
         self.power = power
         self.edges_vec = edges_vec if edges_vec is not None else [1, 2, 3]
         self.min_size = min_size
+        self.min_neibors = min_neibors
 
     def __call__(self, p_d):
         """ Compute aniso only for connected elements """
@@ -700,7 +668,7 @@ class DeformationToAnisotropyConnected:
             # i_hi - counter in t_hi
             for i_hi, i in enumerate(e_hi_idx):
                 jj = np.array([i_hi] + tn.get_neighbours(i_hi, edges))
-                if jj.size >= 3:#(2 + edges):
+                if jj.size >= self.min_neibors:
                     xjj = x[t_hi[jj]].mean(axis=1)
                     yjj = y[t_hi[jj]].mean(axis=1)
                     ejj = e_hi[jj]
@@ -859,29 +827,33 @@ def get_glcm(tn, e_g, d, l):
         glcm[e_g[neibs], e_g[x]] += 1
     return glcm
 
-def compute_moments(etot, moment_powers=(1, 2, 3), factor=DAY_SECONDS, max_missing_values=2):
-    scale_names = np.array(sorted(etot.keys()))
-    scales = np.array([etot[scale_name]['a'].mean() for scale_name in scale_names])
-    gpi = np.where(np.isfinite(scales))[0]
-    if scales.size - gpi.size > max_missing_values:
-        return None
-    scales = scales[gpi]
-    scale_names = scale_names[gpi]
+def compute_moments(etot, moment_powers=(1, 2, 3), exclude_max_error_scale=True):
+    scales = np.array(sorted(etot.keys()))
 
     moms = []
-    for scale_name in scale_names:
-        e = np.hypot(etot[scale_name]['e1'], etot[scale_name]['e2']) * factor
+    for scale in scales:
+        e = etot[scale]
         mom = [np.mean(e ** n) for n in moment_powers]
         moms.append(mom)
+    
     moms = np.array(moms).T
     coefs = []
     moms2 = []
     for m in moms:
-        coef = curve_fit(qval_on_l, np.log10(scales[gpi]), np.log10(m[gpi]))[0]
+        coef = curve_fit(qval_on_l, np.log10(scales), np.log10(m))[0]
+        m_eval = 10**qval_on_l(np.log10(scales), *coef)
+        abs_err = np.abs((m - m_eval))
+        
+        # exclude max  error on some scale
+        if abs_err.max() > np.std(abs_err)*3 and exclude_max_error_scale:
+            m_ = m[abs_err < abs_err.max()]
+            scales_ = scales[abs_err < abs_err.max()]
+            coef = curve_fit(qval_on_l, np.log10(scales_), np.log10(m_))[0]
+            m_eval = 10**qval_on_l(np.log10(scales), *coef)
 
-        moms2.append(10**qval_on_l(np.log10(scales[gpi]), *coef))
+        moms2.append(m_eval)
         coefs.append(coef)
-
+    
     return dict(
         m = moms,
         c = np.array(coefs),

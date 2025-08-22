@@ -17,6 +17,8 @@ class Runner(BaseRunner):
     min_size = 100
     # parallelizm
     cores = 5
+    # minimum number of neighbors to compute anisotropy
+    min_neibors = 3
 
     def __call__(self, pfile):
         dfile = pfile.replace('pairs.npz', 'defor.npz')
@@ -25,7 +27,7 @@ class Runner(BaseRunner):
         pairs = np.load(pfile, allow_pickle=True)['pairs']
         defor = np.load(dfile, allow_pickle=True)['defor']
         defor_to_aniso_con = DeformationToAnisotropyConnected(
-            min_e=self.min_e, edges_vec=self.edges_vec, power=self.power, min_size=self.min_size)
+            min_e=self.min_e, edges_vec=self.edges_vec, power=self.power, min_size=self.min_size, min_neibors=self.min_neibors)
         with Pool(self.cores) as p:
             aniso = p.map(defor_to_aniso_con, zip(pairs, defor))
         print(ofile)
