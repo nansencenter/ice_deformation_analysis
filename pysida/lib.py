@@ -1048,3 +1048,9 @@ def collocate_pairs(r_pairs, mfl, r_min, a_max, distance_upper_bound1, cores):
     with Pool(cores) as p:
         n_pairs = p.map(collocate_pair, r_pairs)
     return n_pairs
+
+def get_nn_distances(p):
+    points = np.column_stack((p.x0, p.y0))
+    tree = cKDTree(points)
+    distances, _ = tree.query(points, k=2)
+    return distances[:, 1]
