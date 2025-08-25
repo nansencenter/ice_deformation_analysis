@@ -9,7 +9,7 @@ from pysida.lib import PairFilter, MarsanSpatialScaling, BaseRunner
 
 class Runner(BaseRunner):
     cores = 4
-    def __call__(self, pfile, date_begin, date_end, freq, dist2coast_path, resolution):
+    def __call__(self, pfile, date_begin, date_end, freq):
         dfile = pfile.replace('pairs.npz', 'defor.npz')
         ofile = pfile.replace('pairs.npz', 'scale.npz')
         if self.skip_processing(ofile): return ofile
@@ -18,7 +18,7 @@ class Runner(BaseRunner):
         with np.load(dfile, allow_pickle=True) as f:
             defor = list(f['defor'])
 
-        pf = PairFilter(pairs, defor, dist2coast_path=dist2coast_path, resolution=resolution)
+        pf = PairFilter(pairs, defor, dist2coast_path=self.dist2coast_path, resolution=self.resolution)
         mss = MarsanSpatialScaling(pf)
         dates = pd.date_range(date_begin, date_end, freq=freq).to_pydatetime()
         if self.cores <= 1:

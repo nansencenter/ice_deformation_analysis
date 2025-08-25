@@ -31,7 +31,7 @@ class BaseRunner:
         return False
 
 
-@dataclass
+
 class Pair:
     x0: np.ndarray
     x1: np.ndarray
@@ -43,6 +43,9 @@ class Pair:
     a: np.ndarray
     p: np.ndarray
     g: np.ndarray
+
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
 
     def triplot(self):
         plt.triplot(self.x0, self.y0, self.t, mask=~self.g)
@@ -112,7 +115,6 @@ class MeshFileList:
         return self.data[idate]['x'], self.data[idate]['y'], self.data[idate]['i']
 
 
-@dataclass
 class Defor:
     e1: np.ndarray
     e2: np.ndarray
@@ -121,6 +123,9 @@ class Defor:
     uy: np.ndarray
     vx: np.ndarray
     vy: np.ndarray
+
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
 
     def tripcolor(self, p, vmin=0, vmax=0.1, name='e1', units='d', cmap='plasma_r'):
         v = np.array(self.__dict__[name])
@@ -377,6 +382,7 @@ class GetSatPairs:
 
     def get_pairs_for_img2(self, im2):
         pairs = []
+        #pairs = Pairs()
         df2 = self.df[self.df.i == im2]
         d2 = df2.iloc[0].d
 
@@ -446,6 +452,7 @@ class GetSatPairs:
                 p = p.astype(np.float32),
                 g = g,
             ))
+            # pairs.append(x0, y0, ...)
         return pairs
 
 def jacobian(x0, y0, x1, y1, x2, y2):
@@ -486,9 +493,6 @@ def get_velocity_gradient_elems(x, y, u, a):
     return ux, uy
 
 def sample_nextsim_pairs(r_pairs, mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2, cores):
-    """ NB: Outdated function. It was used in script c_merge_nextsim_rgps to sample nextsim outputs around RGPS obs
-        collocate_pairs is used instead now
-    """
     sample_one_pair = SampleOnePair(mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2)
     if cores <= 1:
         n_pairs = list(map(sample_one_pair, r_pairs))
@@ -498,9 +502,6 @@ def sample_nextsim_pairs(r_pairs, mfl, r_min, a_max, distance_upper_bound1, dist
     return n_pairs
 
 class SampleOnePair:
-    """ NB: Outdated class. It was used in script c_merge_nextsim_rgps to sample nextsim outputs around RGPS obs
-        MergeSatNextPair is used instead now.
-    """
     def __init__(self, mfl, r_min, a_max, distance_upper_bound1, distance_upper_bound2):
         self.mfl = mfl
         self.r_min = r_min
@@ -596,7 +597,7 @@ def cleanup_triangulation(t, x, y):
 
 def get_deformation_from_pair(p):
     if p is None:
-        return None, None, None, None
+        return None
     u, v = p.get_speed()
     ux, uy, vx, vy = p.get_velocity_gradients(u, v)
     e1, e2, e3 = get_deformation(ux, uy, vx, vy)

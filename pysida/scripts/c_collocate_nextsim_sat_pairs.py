@@ -18,9 +18,6 @@ class Runner(BaseRunner):
         super().__init__(*args, **kwargs)
         # maximal area
         self.a_max = 2. * self.resolution ** 2
-        # distance from RGPS elements to neXtSIM elements for final subset
-        self.distance_upper_bound2 = self.resolution * 1.5
-
 
     def __call__(self, src_file, src_dir, dst_file_sat, dst_file_nextsim):
         if self.skip_processing(dst_file_sat): return dst_file_sat, dst_file_nextsim
