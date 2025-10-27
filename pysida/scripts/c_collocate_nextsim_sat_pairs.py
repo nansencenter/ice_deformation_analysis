@@ -12,6 +12,7 @@ class Runner(BaseRunner):
     r_min = 0.13
     # distance from RGPS nodes to neXtSIM nodes for initial subset
     distance_upper_bound1 = 100000
+    max_pair_time_diff = 2 * 60 * 60  # 2 hours in seconds
     cores = 4
 
     def __init__(self, *args, **kwargs):
@@ -30,6 +31,7 @@ class Runner(BaseRunner):
             self.r_min,
             self.a_max,
             self.distance_upper_bound1,
+            self.max_pair_time_diff,
             cores=self.cores
         )
         sat_pairs, nextsim_pairs = [], []

@@ -50,10 +50,10 @@ class Pair:
     def triplot(self):
         plt.triplot(self.x0, self.y0, self.t, mask=~self.g)
 
-    def get_speed(self):
+    def get_speed(self, factor=1):
         time_delta = (self.d1 - self.d0).total_seconds()
-        u = (self.x1 - self.x0) / time_delta
-        v = (self.y1 - self.y0) / time_delta
+        u = (self.x1 - self.x0) / time_delta * factor
+        v = (self.y1 - self.y0) / time_delta * factor
         return u, v
 
     def get_velocity_gradients(self, u, v):
@@ -194,7 +194,7 @@ class PairFilter:
             if (
                 (self.min_time_diff <= time_diff) and
                 (self.max_time_diff >= time_diff) and
-                (date <= p.d0 < (date + pd.Timedelta(self.window)))
+                (date <= p.d1 < (date + pd.Timedelta(self.window)))
                 ):
                 gpi = (
                     (p.a >= self.min_area) *
@@ -241,6 +241,8 @@ class MarsanSpatialScaling:
         self.skip_percentile = skip_percentile
 
     def merge_pairs(self, pdefor):
+        if len(pdefor) == 0:
+            return None
         m = defaultdict(list)
         for p in pdefor:
             m['x'].append(p.x0[p.t].mean(axis=1)[p.g])
@@ -311,6 +313,8 @@ class MarsanSpatialScaling:
         if len(pdefor) == 0:
             return None
         merged = self.merge_pairs(pdefor)
+        if merged is None:
+            return None
         scales = self.compute_scales(merged)
         etot, _ = self.coarse_grain(merged, scales)
         m = compute_moments(etot)
@@ -370,7 +374,7 @@ class GetSatPairs:
     def get_all_pairs(self, date0, date1):
         """ Find pairs of images in RGPS or S1 data and create a Pair objects """
         
-        dfd = self.df[(self.df.d >= date0) * (self.df.d <= date1)]
+        dfd = self.df[(self.df.d >= date0) & (self.df.d <= date1)]
         im2_idx = np.unique(dfd.i)
         if self.cores <= 1:
             pairs = list(map(self.get_pairs_for_img2, im2_idx))
@@ -387,7 +391,7 @@ class GetSatPairs:
         d2 = df2.iloc[0].d
 
         gpi = (
-            (self.df.d >= (d2 - timedelta(self.max_time_diff))) *
+            (self.df.d >= (d2 - timedelta(self.max_time_diff))) &
             (self.df.d <= (d2 - timedelta(self.min_time_diff)))
         )
         im1_idx = np.unique(self.df[gpi].i)
@@ -466,8 +470,9 @@ def measure(xt, yt):
     dy = np.diff(np.vstack([yt, yt[0]]), axis=0)
     edges = np.hypot(dx, dy)
     perim = edges.sum(axis=0)
+    perim = np.where(perim == 0, np.nan, perim)
     area = get_area(xt, yt)
-    ap_ratio = area**0.5 / perim
+    ap_ratio = np.abs(area)**0.5 / perim
     return area, perim, ap_ratio
 
 def get_triangulation(x, y):
@@ -987,15 +992,20 @@ def get_subset_pair(idx, x0, y0, x1, y1, d0, d1, r_min, a_max):
     return pair
 
 class CollocatePair:
-    def __init__(self, mfl, r_min, a_max, distance_upper_bound1):
+    def __init__(self, mfl, r_min, a_max, distance_upper_bound1, max_pair_time_diff=None):
         self.mfl = mfl
         self.r_min = r_min
         self.a_max = a_max
         self.distance_upper_bound1 = distance_upper_bound1
+        self.max_pair_time_diff = max_pair_time_diff
 
     def __call__(self, r):
         _, nd0 = self.mfl.find_nearest(r.d0)
         _, nd1 = self.mfl.find_nearest(r.d1)
+        if self.max_pair_time_diff is not None:
+            pair_time_diff = np.hypot((nd0 - r.d0).total_seconds(), (nd1 - r.d1).total_seconds())
+            if pair_time_diff > self.max_pair_time_diff:
+                return None
 
         if nd0 == nd1:
             #print('nd0 == nd1')
@@ -1042,8 +1052,8 @@ class CollocatePair:
 
         return r_pair, n_pair
 
-def collocate_pairs(r_pairs, mfl, r_min, a_max, distance_upper_bound1, cores):
-    collocate_pair = CollocatePair(mfl, r_min, a_max, distance_upper_bound1)
+def collocate_pairs(r_pairs, mfl, r_min, a_max, distance_upper_bound1, max_pair_time_diff=None, cores=4):
+    collocate_pair = CollocatePair(mfl, r_min, a_max, distance_upper_bound1, max_pair_time_diff)
     if cores <= 1:
         n_pairs = list(map(collocate_pair, r_pairs))
     with Pool(cores) as p:
