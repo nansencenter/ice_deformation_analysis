@@ -357,6 +357,110 @@ def thin_poisson(x, y, r, seed=None):
 
 
 class GetSatPairs:
+    """
+    Class GetSatPairs
+    -----------------
+    Utility for selecting and assembling pairs of satellite/photogrammetric
+    observations from a master table of measurements. The class filters candidate
+    image pairs by temporal separation, point-count, per-point displacement, and
+    geometric quality (via Delaunay-based triangulation metrics), optionally
+    thinning points using Poisson-disk sampling and excluding spatial regions.
+    Designed to produce a list of Pair objects suitable for downstream
+    deformation or motion analysis.
+    The instance expects a primary tabular input (self.df) with one row per
+    measurement point and the following columns (names shown as used by the
+    implementation):
+    - d : datetime-like
+        Acquisition date/time for the measurement.
+    - i : int or hashable
+        Image or scene identifier index. Rows with the same i belong to the same
+        image/scene.
+    - g : int or hashable
+        Point unique identifier used to match points between two images (same g
+        in both images indicates the same physical point).
+    - x, y : numeric
+        Coordinates of the measurement in a common projected frame.
+    High-level behavior
+    -------------------
+    - get_all_pairs(date0, date1) filters self.df to rows with d in [date0, date1],
+      then for each unique image index in that window treats it as the "second"
+      image (im2) and searches for prior images (im1) whose date lies between
+      (d2 - max_time_diff) and (d2 - min_time_diff). Each (im1, im2) candidate is
+      validated and converted to a Pair instance if it meets the filters.
+    - get_pairs_for_img2(im2) performs the per-pair operations:
+        - intersect points by id (g) between the two images
+        - enforce minimum number of matched points (min_size)
+        - optionally remove points in exclude_regions
+        - remove individual points whose displacement magnitude is below d_min
+        - optionally thin points using a Poisson-disk sampler (poisson_disk_radius)
+        - compute a triangulation and associated triangle metrics, and keep only
+          triangles whose circumradius r >= r_min and area a <= a_max
+        - construct and return a Pair object containing filtered coordinates,
+          dates, triangulation arrays and boolean mask of good triangles (g)
+    Attributes
+        Primary data frame or equivalent table of measurements. Must contain the
+        columns described above (d, i, g, x, y). Assigned at construction.
+    min_time_diff : float (days) = 0.5
+        Minimum allowed time difference (in days) between images in a pair. When
+        building pairs for a given image (d2), potential earlier images must be
+        at least this many days before d2.
+    max_time_diff : float (days) = 7
+        Maximum allowed time difference (in days) between images in a pair.
+    min_size : int = 100
+        Minimum required number of matching points between two images after all
+        per-point filtering steps. Pairs with fewer points are discarded.
+    r_min : float = 0.12
+        Minimum allowed triangle circumradius (in same coordinate units as x/y)
+        used to reject triangles considered too small or ill-conditioned.
+    a_max : float = 200e6
+        Maximum allowed triangle area used to reject triangles that are overly
+        large (which can indicate bad triangulation or degenerate geometry).
+    d_min : float = 200
+        Minimum displacement magnitude (same units as coordinates) for an
+        individual point to be retained in a pair. Points moving less than this
+        threshold are removed prior to triangulation.
+    poisson_disk_radius : float or None = None
+        If set to a positive value, a Poisson-disk thinning is applied to the
+        matched points (per pair) using this radius. If None, no Poisson thinning
+        is performed.
+    exclude_regions : sequence of (xmin, xmax, ymin, ymax) tuples or None = None
+        If provided, each tuple defines an axis-aligned rectangular region to be
+        excluded from pairs. Points whose (x,y) lie inside any exclusion rectangle
+        are removed prior to other filters.
+    cores : int = 4
+        Number of worker processes to use when building all pairs. If cores <= 1,
+        processing is done serially; otherwise a multiprocessing Pool is used.
+    Notes and usage considerations
+    ------------------------------
+    - kwargs passed to the constructor are merged into the instance dictionary,
+      allowing callers to override any of the above attributes at creation time.
+      Take care not to override internal methods or required attributes.
+    - The class mutates arrays (filters, thins) and casts arrays to np.float32 when
+      constructing Pair objects to reduce memory usage.
+    - The data frame is expected to be relatively large; computationally expensive
+      steps include pairwise intersection, triangulation, and (optionally)
+      Poisson-disk sampling. Use the cores attribute to parallelize across image2
+      candidates.
+    - Exclusion rectangles and Poisson thinning are applied per-pair using the
+      coordinates from the first image in the pair.
+    - The Pair objects appended by get_pairs_for_img2 contain (at minimum):
+        - x0, y0 : coordinates in image 1 (float32)
+        - x1, y1 : coordinates in image 2 (float32)
+        - d0, d1 : dates for image 1 and image 2
+        - t : triangulation connectivity (triangle vertex indices)
+        - a : triangle areas (float32)
+        - p : triangle perimeters or other per-triangle metric (float32)
+        - g : boolean mask indicating triangles that pass r_min/a_max filters
+    - The class does not validate types of DataFrame columns beyond relying on
+      operations (comparisons, indexing, numpy routines). Upstream validation of
+      types and units is recommended.
+    Example
+    -------
+    Create an instance and produce pairs for a date window:
+        gp = GetSatPairs(df, min_size=150, poisson_disk_radius=5.0)
+        pairs = gp.get_all_pairs(date0, date1)
+    """
+
     min_time_diff = 0.5
     max_time_diff = 7
     min_size = 100
@@ -368,6 +472,35 @@ class GetSatPairs:
     cores = 4
 
     def __init__(self, df, **kwargs):
+        """
+        Initialize the instance with a primary data frame and optional attributes.
+        Parameters
+        ----------
+        df : pandas.DataFrame or array-like
+            The primary data container for this object (typically a pandas DataFrame
+            holding the observations or measurements to be analyzed). The instance
+            will store this object on the attribute `self.df`.
+        **kwargs : dict
+            Arbitrary keyword arguments that will be injected directly into the
+            instance's attribute dictionary. Each key/value pair in `kwargs` becomes
+            an attribute on the instance (equivalent to `self.<key> = <value>`).
+        Raises
+        ------
+        TypeError
+            If `kwargs` contains keys that are not valid attribute names for the
+            intended usage (e.g., non-string keys), an error may occur when users
+            attempt to access those attributes.
+        Notes
+        -----
+        - Using `__dict__.update(kwargs)` means supplied keys will overwrite any
+          existing attributes with the same names, including internal attributes if
+          names collide. Avoid passing keys that conflict with existing method or
+          attribute names.
+        - Values assigned via `kwargs` are stored by reference; mutating a mutable
+          value after initialization will affect the stored attribute.
+        - This constructor does not return a value; it configures the new instance.
+        """
+
         self.df = df
         self.__dict__.update(kwargs)
 
