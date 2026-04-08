@@ -1023,7 +1023,7 @@ def pair_from_nextsim_snapshots(f0, f1, d0, d1, r_min=0.12, a_max=200e6):
         f0i = fi0(x0n[t].mean(axis=1), y0n[t].mean(axis=1))
         g[f0i == -1] = False
 
-    return Pair(x0n, x1n, y0n, y1n, d0, d1, t, a, p, g)
+    return Pair(x0=x0n, x1=x1n, y0=y0n, y1=y1n, d0=d0, d1=d1, t=t, a=a, p=p, g=g)
 
 def get_velocity_gradient_nodes(x, y, u, v):
     """ Compute velocity gradient on input nodes """
