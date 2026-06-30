@@ -7,8 +7,9 @@ import pandas as pd
 from pysida.lib import BaseRunner, MeshFileList, pair_from_nextsim_snapshots
 
 class Runner(BaseRunner):
-    r_min=0.12
-    a_max=200e6
+    r_min = 0.12
+    a_max = 200e6
+    exclude_regions = None
 
     def __call__(self, nextsim_dir, date_begin, date_end, freq, ofile):
         if self.skip_processing(ofile): return ofile
@@ -18,7 +19,7 @@ class Runner(BaseRunner):
         for i in range(len(dates) - 1):
             f0, d0 = mfl.find_nearest(dates[i])
             f1, d1 = mfl.find_nearest(dates[i+1])
-            pair = pair_from_nextsim_snapshots(f0, f1, d0, d1, r_min=self.r_min, a_max=self.a_max)
+            pair = pair_from_nextsim_snapshots(f0, f1, d0, d1, r_min=self.r_min, a_max=self.a_max, exclude_regions=self.exclude_regions)
             pairs.append(pair)
         print('N pairs', len(pairs), ofile)
         np.savez(ofile, pairs=pairs)

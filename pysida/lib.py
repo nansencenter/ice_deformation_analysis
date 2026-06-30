@@ -164,12 +164,16 @@ class PairFilter:
     min_dist=100
     # minimum displacement between nodes
     min_drift=1000
+    # maximum displacement between nodes    
+    max_drift=100000
     # minimum size of triangulation
     # lower number increases number of triangles but increase chance of noise
     min_tri_size = 10
     # path to the dist2coas NPY file
     dist2coast_path = None
-    
+    # List of tuples with corner coordinates of regions to exclude from analysis
+    exclude_regions = None
+
     def __init__(self, pairs, defor, resolution=10000, **kwargs):
         self.__dict__.update(kwargs)
         self.min_area = resolution ** 2 / 15
@@ -201,15 +205,30 @@ class PairFilter:
                     (p.a <= self.max_area) *
                     (np.sqrt(p.a)/p.p >= self.min_ap_ratio)
                 )
+
+                xel = p.x0[p.t].mean(axis=1)
+                yel = p.y0[p.t].mean(axis=1)
                 if self.min_dist > 0 and self.dist2coast is not None:
-                    xel = p.x0[p.t].mean(axis=1)
-                    yel = p.y0[p.t].mean(axis=1)
                     dist = self.get_dist2coast(xel, yel)
                     gpi *= (dist > self.min_dist)
+
+                if self.exclude_regions is not None:
+                    mask_exclude = np.zeros(xel.shape, dtype=bool)
+                    for exclude_region in self.exclude_regions:
+                        mask_exclude += (
+                            (xel > exclude_region[0]) *
+                            (xel < exclude_region[1]) *
+                            (yel > exclude_region[2]) * 
+                            (yel < exclude_region[3]))
+                    gpi *= ~mask_exclude
 
                 if self.min_drift > 0:
                     drift = np.hypot(p.x1 - p.x0, p.y1 - p.y0)[p.t].mean(axis=1)
                     gpi *= (drift > self.min_drift)
+                
+                if self.max_drift > 0:
+                    drift = np.hypot(p.x1 - p.x0, p.y1 - p.y0)[p.t].mean(axis=1)
+                    gpi *= (drift < self.max_drift)
 
                 gpi = np.where(gpi)[0]
                 if gpi.size > self.min_tri_size:
@@ -233,12 +252,13 @@ class PairFilter:
     
 
 class MarsanSpatialScaling:
-    def __init__(self, pf, min_scale_factor=1.5, max_scale_factor=0.1, num_scales=10, skip_percentile=0.05):
+    def __init__(self, pf, min_scale_factor=1.5, max_scale_factor=0.1, num_scales=10, perc_lim=(10, 99.9), min_e_tot=0):
         self.pf = pf
         self.min_scale_factor = min_scale_factor
         self.max_scale_factor = max_scale_factor
         self.num_scales = num_scales
-        self.skip_percentile = skip_percentile
+        self.perc_lim = perc_lim
+        self.min_e_tot = min_e_tot
 
     def merge_pairs(self, pdefor):
         if len(pdefor) == 0:
@@ -273,7 +293,11 @@ class MarsanSpatialScaling:
     def coarse_grain(self, merged, scales):
         # remove extreme outliers
         me_e4 = np.hypot(merged.e1, merged.e2)
-        gpi = (me_e4 > np.percentile(me_e4, self.skip_percentile)) * (me_e4 < np.percentile(me_e4, 100-self.skip_percentile))
+        gpi = (
+            (me_e4 > np.percentile(me_e4, self.perc_lim[0])) * 
+            (me_e4 < np.percentile(me_e4, self.perc_lim[1])) *
+            (me_e4 > self.min_e_tot)
+        )
         for name in merged.__dict__:
             merged.__dict__[name] = merged.__dict__[name][gpi]
 
@@ -758,16 +782,17 @@ def get_deformation(ux, uy, vx, vy):
 
 
 class DeformationToAnisotropyConnected:
-    def __init__(self, min_e=0.1, power=2, edges_vec=None, min_size=3, min_neibors=3):
+    def __init__(self, min_e=0.1, power=2, edges_vec=None, min_size=3, min_neibors=3, log=False):
         self.min_e = min_e
         self.power = power
         self.edges_vec = edges_vec if edges_vec is not None else [1, 2, 3]
         self.min_size = min_size
         self.min_neibors = min_neibors
+        self.log = log
 
     def __call__(self, p_d):
         """ Compute aniso only for connected elements """
-        p,d = p_d
+        p, d = p_d
         min_e = self.min_e
         power = self.power
         edges_vec = self.edges_vec
@@ -788,6 +813,8 @@ class DeformationToAnisotropyConnected:
         e_hi_idx = np.where(e > min_e)[0]
         t_hi = t[e_hi_idx]
         e_hi = e[e_hi_idx]
+        if self.log:
+            e_hi = np.log(e_hi) - np.log(min_e) + 0.1
 
         tn = TriNeighbours(t_hi)
         aniso = defaultdict(list)
@@ -992,7 +1019,7 @@ def compute_moments(etot, moment_powers=(1, 2, 3), exclude_max_error_scale=True)
 def qval_on_l(x, a, b):
     return -a*x + b
 
-def pair_from_nextsim_snapshots(f0, f1, d0, d1, r_min=0.12, a_max=200e6):
+def pair_from_nextsim_snapshots(f0, f1, d0, d1, r_min=0.12, a_max=200e6, exclude_regions=None):
     m0 = NextsimMesh(f0)
     m1 = NextsimMesh(f1)
     x0 = m0.nodes_x
@@ -1011,6 +1038,19 @@ def pair_from_nextsim_snapshots(f0, f1, d0, d1, r_min=0.12, a_max=200e6):
     y0n = y0[ids0i]
     x1n = x1[ids1i]
     y1n = y1[ids1i]
+
+    if exclude_regions is not None:
+        mask_exclude = np.zeros(x0n.shape, dtype=bool)
+        for exclude_region in exclude_regions:
+            mask_exclude += ((x0n > exclude_region[0]) *
+                                (x0n < exclude_region[1]) *
+                                (y0n > exclude_region[2]) * 
+                                (y0n < exclude_region[3]))
+        x0n = x0n[~mask_exclude]
+        y0n = y0n[~mask_exclude]
+        x1n = x1n[~mask_exclude]
+        y1n = y1n[~mask_exclude]
+
     t, a, p, r = get_triangulation(x0n, y0n)
     g = (r >= r_min) * (a <= a_max)
 
@@ -1023,7 +1063,7 @@ def pair_from_nextsim_snapshots(f0, f1, d0, d1, r_min=0.12, a_max=200e6):
         f0i = fi0(x0n[t].mean(axis=1), y0n[t].mean(axis=1))
         g[f0i == -1] = False
 
-    return Pair(x0n, x1n, y0n, y1n, d0, d1, t, a, p, g)
+    return Pair(x0=x0n, x1=x1n, y0=y0n, y1=y1n, d0=d0, d1=d1, t=t, a=a, p=p, g=g)
 
 def get_velocity_gradient_nodes(x, y, u, v):
     """ Compute velocity gradient on input nodes """

@@ -14,8 +14,11 @@ class Runner(BaseRunner):
         if self.skip_processing(ofile): return ofile
         with np.load(pfile, allow_pickle=True, fix_imports=False) as ds:
             pairs = ds['pairs']
-        with Pool(self.cores) as p:
-            defor = p.map(get_deformation_from_pair, pairs)
+        if self.cores > 1:
+            with Pool(self.cores) as p:
+                defor = p.map(get_deformation_from_pair, pairs)
+        else:
+            defor = list([get_deformation_from_pair(pair) for pair in pairs])
         print(ofile, len(defor))
         np.savez(ofile, defor=defor)
         return ofile
